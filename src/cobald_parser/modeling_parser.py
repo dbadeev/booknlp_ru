@@ -118,6 +118,11 @@ class CobaldParser(PreTrainedModel):
         if inference_mode:
             # Restore predicted nulls in the original sentences.
             output["words"] = add_nulls(words, null_output["preds"])
+
+            # --- ДОБАВИТЬ ЭТУ СТРОКУ ---
+            # Принудительно добавляем [CLS], чтобы он стал индексом 0 (ROOT) для парсера
+            output["words"] = prepend_cls(output["words"])
+            # ---------------------------
         else:
             output["words"] = words
 

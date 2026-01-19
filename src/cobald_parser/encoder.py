@@ -85,8 +85,22 @@ class WordTransformerEncoder(nn.Module):
             reduce="mean",
             include_self=False
         )
+        # --- ИЗМЕНЕНИЕ ---
+        # --- БЫЛО: ---
         # Now remove the auxiliary word in the beginning.
         words_embeddings = words_embeddings[:, 1:, :]
+        #
+        # # --- СТАЛО (ПАТЧ): ---
+        # # 1. Сохраняем вектор CLS (он лежит по индексу 0 после агрегации, так как word_id для него был 0)
+        # cls_embedding = words_embeddings[:, 0:1, :]
+        #
+        # # 2. Удаляем "служебный" слот 0, оставляя только слова (индексы 1..N)
+        # words_embeddings = words_embeddings[:, 1:, :]
+        #
+        # # 3. Перезаписываем вектор ПЕРВОГО слова вектором CLS.
+        # # Это слово будет нашим фиктивным <root>, который мы добавим в parse().
+        # words_embeddings[:, 0, :] = cls_embedding[:, 0, :]
+
         return words_embeddings
 
     def get_embedding_size(self) -> int:

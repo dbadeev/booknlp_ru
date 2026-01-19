@@ -1,0 +1,34 @@
+dirs:
+  raw: "data/raw"
+  interim: "data/interim"
+
+sources:
+  syntagrus:
+    name: "SynTagRus"
+    type: "split_ud"
+    urls:
+      train_a: "https://raw.githubusercontent.com/UniversalDependencies/UD_Russian-SynTagRus/master/ru_syntagrus-ud-train-a.conllu"
+      train_b: "https://raw.githubusercontent.com/UniversalDependencies/UD_Russian-SynTagRus/master/ru_syntagrus-ud-train-b.conllu"
+      train_c: "https://raw.githubusercontent.com/UniversalDependencies/UD_Russian-SynTagRus/master/ru_syntagrus-ud-train-c.conllu"
+      dev: "https://raw.githubusercontent.com/UniversalDependencies/UD_Russian-SynTagRus/master/ru_syntagrus-ud-dev.conllu"
+      test: "https://raw.githubusercontent.com/UniversalDependencies/UD_Russian-SynTagRus/master/ru_syntagrus-ud-test.conllu"
+
+  taiga:
+    name: "Taiga"
+    type: "split_ud" # Изменен тип на split_ud
+    urls:
+      # Taiga также разбита на части в master ветке
+      train_a: "https://raw.githubusercontent.com/UniversalDependencies/UD_Russian-Taiga/master/ru_taiga-ud-train-a.conllu"
+      train_b: "https://raw.githubusercontent.com/UniversalDependencies/UD_Russian-Taiga/master/ru_taiga-ud-train-b.conllu"
+      train_c: "https://raw.githubusercontent.com/UniversalDependencies/UD_Russian-Taiga/master/ru_taiga-ud-train-c.conllu"
+      train_d: "https://raw.githubusercontent.com/UniversalDependencies/UD_Russian-Taiga/master/ru_taiga-ud-train-d.conllu"
+      train_e: "https://raw.githubusercontent.com/UniversalDependencies/UD_Russian-Taiga/master/ru_taiga-ud-train-e.conllu"
+      test: "https://raw.githubusercontent.com/UniversalDependencies/UD_Russian-Taiga/master/ru_taiga-ud-test.conllu"
+
+  cobald:
+    name: "CoBaLD"
+    type: "extended_ud"
+    urls:
+      # Используем master, так как это основная ветка в репозитории CobaldAnnotation
+      train: "https://raw.githubusercontent.com/CobaldAnnotation/CobaldRus/master/train.conllu"
+      dev: "https://raw.githubusercontent.com/CobaldAnnotation/CobaldRus/master/dev.conllu"
