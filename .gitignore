@@ -219,3 +219,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# SynTagRus (большой корпус, не коммитим)
+data/syntagrus_old/
+
+# Результаты бенчмарков
+results/benchmarks/*.json
+results/benchmarks/*.csv
+
