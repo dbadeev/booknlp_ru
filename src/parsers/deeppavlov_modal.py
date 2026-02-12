@@ -1,109 +1,172 @@
 import modal
-import logging
+from typing import List, Dict, Any
 
-# Образ с установкой зависимостей через DeepPavlov
-image = (
+
+# Создаём Volume для кеширования моделей DeepPavlov
+cache_volume = modal.Volume.from_name("deeppavlov-cache", create_if_missing=True)
+
+# Образ с поддержкой GPU и необходимых лингвистических библиотек
+dp_image = (
     modal.Image.debian_slim()
-    .apt_install("git")
     .pip_install(
+        "torch>=2.0.0",
+        "transformers",
         "deeppavlov",
-        "tensorflow==2.15.0",
+        "razdel",
         "pandas",
-        "transformers"
-    )
+        "nltk",
+        "tqdm")
+
     .run_commands(
-        "python -m deeppavlov install syntax_ru_syntagrus_bert"
+        "python -m deeppavlov install ru_syntagrus_joint_parsing",
+        "python -c \"from deeppavlov import build_model;"
+        "build_model('ru_syntagrus_joint_parsing', download=True)\""
     )
+
+    .run_commands(
+        "python -c \"import nltk; nltk.download('punkt_tab', quiet=True)\""
+    )
+
+    .env({
+        # Отключаем повторные проверки хешей
+        "DEEPPAVLOV_DOWNLOAD_PROGRESSIVE": "0",
+    })
 )
 
 app = modal.App("booknlp-ru-deeppavlov")
 
-@app.cls(
-    image=image,
-    gpu="T4",
-    timeout=600,
-)
+
+@app.cls(image=dp_image, gpu="T4", timeout=1200)
 class DeepPavlovService:
+
     @modal.enter()
-    def setup(self):
-        """
-        Инициализация при старте контейнера.
-        """
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger("DeepPavlovService")
-        self.logger.info("Initializing DeepPavlov container...")
-
-        try:
-            from deeppavlov import build_model
-            self.logger.info("Import successful. Building model syntax_ru_syntagrus_bert...")
-
-            # download=True гарантирует наличие весов
-            # self.model = build_model(configs.syntax.syntax_ru_syntagrus_bert, download=True)
-            self.model = build_model("syntax_ru_syntagrus_bert", download=True)
-            self.logger.info("Model loaded successfully!")
-
-        except Exception as e:
-            self.logger.error(f"CRITICAL INIT ERROR: {e}", exc_info=True)
-            raise  # Прокидываем исключение, чтобы контейнер не запустился
+    def enter(self):
+        from deeppavlov import build_model, configs
+        # Конфигурация joint_parsing обеспечивает SOTA-точность (LAS ~93.4%)
+        # и полную разметку морфологических признаков
+        self.model = build_model(
+            configs.morpho_syntax_parser.ru_syntagrus_joint_parsing,
+            download=True
+        )
 
     @modal.method()
-    def parse_batch(self, batch_tokens: list[list[str]]) -> list[list[dict]]:
+    def parse_text(self, text: str) -> List:
+        from razdel import tokenize, sentenize
+
+        # 1. Сегментация (Razdel)
+        sentences = list(sentenize(text))
+
+        tokenized_sentences = []
+        token_spans = []  # Для сохранения символьных смещений
+
+        for sent in sentences:
+            tokens = list(tokenize(sent.text))
+            tokenized_sentences.append([t.text for t in tokens])
+            # Смещения считаем глобально относительно начала исходного текста
+            token_spans.append([
+                (sent.start + t.start, sent.start + t.stop)
+                for t in tokens
+            ])
+
+        # 2. Выполнение разбора
+        # DeepPavlov возвращает список строк в формате CoNLL-U (10 полей)
+        parsed_batch = self.model(tokenized_sentences)
+
+        results = []
+        for i, sent_conllu in enumerate(parsed_batch):
+            sent_res = []
+            # Разбираем CoNLL-U вывод
+            lines = [
+                l for l in sent_conllu.split('\n')
+                if l and not l.startswith('#')
+            ]
+
+            for j, line in enumerate(lines):
+                fields = line.split('\t')
+
+                # Проверяем, что это не multi-word token
+                if '-' in fields[0]:
+                    continue
+
+                start_c, end_c = token_spans[i][j] if j < len(token_spans[i]) else (0, 0)
+
+                # ПОЛНЫЙ CoNLL-U формат (10 полей)
+                sent_res.append({
+                    'id': int(fields[0]),  # ID (1-based)
+                    'form': fields[1],  # Словоформа
+                    'lemma': fields[2],  # Лемма
+                    'upos': fields[3],  # Universal POS
+                    'xpos': fields[4],  # Language-specific POS (может быть "_")
+                    'feats': fields[5],  # Морфологические признаки
+                    'head': int(fields[6]),  # Главное слово
+                    'deprel': fields[7],  # Тип связи
+                    'deps': fields[8],  # Enhanced dependencies (обычно "_")
+                    'misc': fields[9],  # MISC (обычно "_")
+                    'startchar': start_c,  # Дополнительно: позиция начала
+                    'endchar': end_c  # Дополнительно: позиция конца
+                })
+
+            results.append(sent_res)
+
+        return results
+
+    @modal.method()
+    def parse_batch(self, texts: List[str]) -> List:
+        """Обработка списка документов для повышения эффективности GPU"""
+        return [self.parse_text(t) for t in texts]
+
+    @modal.method()
+    def parse_text_native(self, text: str) -> List:
         """
-        Парсинг батча предложений.
+        Версия с встроенной токенизацией DeepPavlov (не рекомендуется).
         """
-        if not batch_tokens:
-            return []
+        # DeepPavlov сам токенизирует
+        parsed_batch = self.model([text])
 
-        try:
-            # 2. Инференс
-            outputs = self.model(batch_tokens)
+        results = []
+        for sent_conllu in parsed_batch:
+            sent_res = []
+            lines = [l for l in sent_conllu.split('\n') if l and not l.startswith('#')]
 
-            parsed_batch = []
+            for line in lines:
+                fields = line.split('\t')
+                sent_res.append({
+                    'id': int(fields[0]),
+                    'form': fields[1],
+                    'lemma': fields[2],
+                    'upos': fields[3],
+                    'xpos': fields[4],
+                    'feats': fields[5],
+                    'head': int(fields[6]),
+                    'deprel': fields[7],
+                    'deps': fields[8],
+                    'misc': fields[9]
+                })
 
-            # 3. Разбор ответа
-            for i, conll_output in enumerate(outputs):
-                sentence_parsed = []
-                lines = conll_output.strip().split('\n')
+            results.append(sent_res)
 
-                for line in lines:
-                    if not line or line.startswith('#'):
-                        continue
-
-                    parts = line.split('\t')
-                    if len(parts) < 10:
-                        continue
-
-                    token_data = {
-                        "id": int(parts[0]),
-                        "form": parts[1],
-                        "lemma": parts[2],
-                        "upos": parts[3],
-                        "xpos": parts[4],
-                        "feats": parts[5],
-                        "head": int(parts[6]),
-                        "deprel": parts[7],
-                        "deps": parts[8],
-                        "misc": parts[9]
-                    }
-                    sentence_parsed.append(token_data)
-
-                parsed_batch.append(sentence_parsed)
-
-            return parsed_batch
-
-        except Exception as e:
-            self.logger.error(f"Error during inference: {e}", exc_info=True)
-            raise
+        return results
 
 
+# Для локального тестирования
 @app.local_entrypoint()
 def main():
-    print("Deploying and testing...")
-    tokens = ["Мама", "мыла", "раму", "."]
+    test_text = "Мама мыла раму."
+    print("🚀 Testing DeepPavlov service...")
+
     service = DeepPavlovService()
-    try:
-        result = service.parse_batch.remote([tokens])
-        print("Success! Result sample:")
-        print(result[0][0])
-    except Exception as e:
-        print(f"Remote call failed: {e}")
+    result = service.parse_text.remote(test_text)
+
+    print(f"\nReceived {len(result)} sentence(s)")
+    for s_id, sent in enumerate(result, 1):
+        print(f"\n--- Sentence {s_id} ---")
+        print("ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL")
+        for tok in sent:
+            print(
+                f"{tok['id']}\t{tok['form']}\t{tok['lemma']}\t"
+                f"{tok['upos']}\t{tok['xpos']}\t{tok['feats']}\t"
+                f"{tok['head']}\t{tok['deprel']}"
+            )
+
+    print("\n✅ Test completed!")
+

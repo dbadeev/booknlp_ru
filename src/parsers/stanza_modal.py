@@ -1,11 +1,9 @@
 import modal
 import logging
 
-# Образ для Stanza (PyTorch based)
 image = (
     modal.Image.debian_slim()
     .pip_install("stanza", "torch")
-    # Предзагрузка модели для русского языка, чтобы не качать при каждом старте
     .run_commands("python -c 'import stanza; stanza.download(\"ru\")'")
 )
 
@@ -19,26 +17,44 @@ class StanzaService:
         import stanza
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("StanzaService")
-        self.logger.info("Initializing Stanza pipeline...")
 
-        # Инициализируем пайплайн. Отключаем NER и Sentiment для скорости, оставляем синтаксис.
-        # pretokenized=True важно, если мы хотим сами управлять токенизацией (Razdel),
-        # но Stanza лучше работает со своим токенизатором.
-        # Для чистоты эксперимента ("End-to-End") позволим Stanza самой токенизировать текст,
-        # а потом выровняем через FuzzyAligner.
-        self.nlp = stanza.Pipeline('ru', processors='tokenize,pos,lemma,depparse', verbose=True, use_gpu=True)
-        self.logger.info("Stanza loaded!")
+        # Инициализируем ДВА пайплайна (они делят одну модель в памяти GPU):
+
+        # 1. Для сырого текста (обычный режим)
+        # tokenize_pretokenized=False (по умолчанию)
+        self.nlp_raw = stanza.Pipeline('ru', processors='tokenize,pos,lemma,depparse', verbose=False, use_gpu=True)
+
+        # 2. Для готовых токенов (режим аудита)
+        # tokenize_pretokenized=True заставляет Stanza верить нашим токенам
+        self.nlp_pretokenized = stanza.Pipeline('ru', processors='tokenize,pos,lemma,depparse', verbose=False,
+                                                use_gpu=True, tokenize_pretokenized=True)
+
+        self.logger.info("Stanza loaded (Dual Mode)!")
 
     @modal.method()
     def parse(self, text: str) -> list[list[dict]]:
-        """Возвращает список предложений в нашем унифицированном формате."""
-        doc = self.nlp(text)
+        """Вход: сырой текст. Использует nlp_raw."""
+        doc = self.nlp_raw(text)
+        return self._format_output(doc)
 
+    @modal.method()
+    def parse_batch(self, batch_tokens: list[list[str]]) -> list[list[dict]]:
+        """Вход: готовые токены. Использует nlp_pretokenized."""
+        # Stanza с tokenize_pretokenized=True ожидает список списков строк
+        doc = self.nlp_pretokenized(batch_tokens)
+        return self._format_output(doc)
+
+    def _format_output(self, doc) -> list[list[dict]]:
+        """
+        Вспомогательный метод (бывший _doc_to_list).
+        Конвертирует внутренний объект Stanza Doc в наш формат списка словарей.
+        Используется обоими методами выше, чтобы избежать дублирования кода.
+        """
         result = []
         for sent in doc.sentences:
             sent_parsed = []
             for word in sent.words:
-                token_data = {
+                sent_parsed.append({
                     "id": int(word.id),
                     "form": word.text,
                     "lemma": word.lemma,
@@ -47,10 +63,8 @@ class StanzaService:
                     "feats": word.feats,
                     "head": int(word.head),
                     "deprel": word.deprel,
-                    "start_char": word.start_char,  # Stanza возвращает оффсеты!
+                    "start_char": word.start_char,
                     "end_char": word.end_char
-                }
-                sent_parsed.append(token_data)
+                })
             result.append(sent_parsed)
-
         return result
