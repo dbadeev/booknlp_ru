@@ -160,6 +160,11 @@ class TrankitService:
             # ============================================================
             sent_lang = sent.get('lang', None)  # ← ДОБАВЛЕНО!
 
+            # ИСПРАВЛЕНИЕ: если lang отсутствует, берем из пайплайна
+            if sent_lang is None and hasattr(self, 'nlp'):
+                # Trankit хранит активный язык в атрибуте active_lang
+                sent_lang = getattr(self.nlp, 'active_lang', LANG)  # ← ИСПРАВЛЕНО!
+
             for t in sent['tokens']:
                 # ============================================================
                 # Сохраняем ВСЕ нативные поля токена без преобразований

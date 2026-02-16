@@ -71,7 +71,7 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     parser = MystemParser()
 
-    test_text = "Мама мыла раму."
+    test_text = "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
 
     # ============================================================
     # Демонстрация работы в упрощенном формате (по умолчанию)
@@ -83,7 +83,7 @@ if __name__ == "__main__":
 
     print("Mystem Test:")
     for sent in result:
-        for tok in sent[:5]:
+        for tok in sent:
             print(f"{tok.get('id')}\t{tok.get('form')}\t{tok.get('lemma')}\t{tok.get('upos')}")
 
     # ============================================================
@@ -96,7 +96,8 @@ if __name__ == "__main__":
 
     print("Mystem Test (Native):")
     for sent in result_native:
-        for tok in sent[:3]: # Показываем первые три токена
+        for tok in sent:
+        # for tok in sent[:3]: # Показываем первые три токена
             print(f"  Text: {tok['text']}")
             print(f"    Analysis variants: {len(tok['analysis'])}")
             for j, variant in enumerate(tok['analysis'][:2]):
