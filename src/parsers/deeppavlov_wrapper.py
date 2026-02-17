@@ -90,6 +90,7 @@ if __name__ == "__main__":
     args = parser_args.parse_args()
 
     test_text = "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
+    # test_text = "Мама без мыла мыла раму."
 
     print(f"{'=' * 70}")
     print(f"🚀 Testing DeepPavlov with {args.tokenizer.upper()} tokenizer")
@@ -159,7 +160,8 @@ if __name__ == "__main__":
 
             if result_full['sentences']:
                 first_sent = result_full['sentences'][0]
-                for tok_idx, token in enumerate(first_sent[:3], 1):
+                for tok_idx, token in enumerate(first_sent, 1):
+                # for tok_idx, token in enumerate(first_sent[:3], 1):
                     print(f"\n  [{tok_idx}] {token['form']}")
                     print(f"      {'─'*62}")
                     print(f"      ID: {token['id']}")
