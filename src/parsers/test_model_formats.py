@@ -37,6 +37,22 @@ OUTPUT_NATIVE = "model_formats_native.txt"
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # ============================================================
 
+class _SafeEncoder(json.JSONEncoder):
+    """
+    JSONEncoder с безопасным fallback для не-сериализуемых объектов.
+
+    Необходим для pymorphy3 native-формата, где поле methods_stack
+    содержит кортежи с объектами DictionaryAnalyzer (не JSON-сериализуемы).
+    Все нераспознанные типы конвертируются через repr() для сохранения
+    максимума диагностической информации.
+    """
+    def default(self, obj: Any) -> Any:
+        try:
+            return super().default(obj)
+        except TypeError:
+            return repr(obj)
+
+
 def _first_token_keys(result: Any) -> list:
     """
     Извлекает ключи первого токена из результата любого формата.
@@ -84,6 +100,9 @@ def _write_model_result(f, model_name: str, result: Any) -> None:
       {JSON или текст}
       --- Поля первого токена ---
       Доступные ключи: [...]
+
+    Использует _SafeEncoder для корректной сериализации объектов,
+    не поддерживаемых стандартным json (напр. DictionaryAnalyzer из pymorphy3).
     """
     f.write(f"\n--- {model_name} результат ---\n")
 
@@ -96,8 +115,9 @@ def _write_model_result(f, model_name: str, result: Any) -> None:
             f.write(sent_str)
             f.write("\n")
     # Все остальные форматы (dict, List[List[Dict]], List[Dict])
+    # _SafeEncoder конвертирует нераспознанные типы через repr()
     else:
-        f.write(json.dumps(result, ensure_ascii=False, indent=2))
+        f.write(json.dumps(result, ensure_ascii=False, indent=2, cls=_SafeEncoder))
 
     f.write("\n")
 
