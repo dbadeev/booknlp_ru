@@ -1,13 +1,14 @@
 import modal
 import logging
+from typing import List, Dict, Any
 import sys
-import os
 
+# ─────────────────────────── ПУТИ ────────────────────────────
 LOCALCOBALDDIR = "src/cobald_parser"
 REMOTEROOT = "/root/booknlp_ru"
 REMOTESRC = f"{REMOTEROOT}/src"
 
-# Образ для CoBaLD
+# ─────────────────────────── ОБРАЗ ───────────────────────────
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .pip_install(
@@ -22,13 +23,22 @@ image = (
         "ACCELERATE_DISABLE_MAPPING": "1",
         "ACCELERATE_USE_CPU": "0",
     })
+    # copy=True — файлы копируются в образ, шаги после .env() разрешены
     .add_local_dir(LOCALCOBALDDIR, remote_path=f"{REMOTESRC}/cobald_parser", copy=True)
 )
 
-app = modal.App("booknlp-ru-cobald")
+app    = modal.App("booknlp-ru-cobald")
+
 
 @app.cls(image=image, gpu="T4", timeout=600)
 class CobaldService:
+    """
+    Сервис синтаксического разбора на основе CoBaLD-парсера.
+
+    Принимает сырые тексты (str), токенизация выполняется внутри pipeline.
+    Два формата вывода: 'dict' (CoNLL-U + CoBaLD поля) и 'native' (полный).
+    """
+
     @modal.enter()
     def setup(self):
         import torch
@@ -40,319 +50,271 @@ class CobaldService:
         if REMOTESRC not in sys.path:
             sys.path.append(REMOTESRC)
 
+        # Оригинальные импорты из cobald_parser
         from src.cobald_parser.modeling_parser import CobaldParser
         from src.cobald_parser.configuration import CobaldParserConfig
         from src.cobald_parser.pipeline import ConlluTokenClassificationPipeline
         from razdel import tokenize as razdel_tokenize, sentenize
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        model_name = "CoBaLD/xlm-roberta-base-cobald-parser-ru"
 
+        # Модель грузится с HuggingFace Hub, не из volume
+        model_name = "CoBaLD/xlm-roberta-base-cobald-parser-ru"
         config = CobaldParserConfig.from_pretrained(model_name)
         model = CobaldParser.from_pretrained(model_name, config=config)
         model.to(self.device)
         model.eval()
 
-        # Используем Pipeline для декодирования
         self.pipeline = ConlluTokenClassificationPipeline(
             model=model,
             tokenizer=lambda text: [tok.text for tok in razdel_tokenize(text)],
-            sentenizer=lambda text: [sent.text for sent in sentenize(text)]
+            sentenizer=lambda text: [sent.text for sent in sentenize(text)],
         )
-
         self.vocab = config.vocabulary
         self.logger.info(f"CoBaLD pipeline loaded on {self.device}!")
 
-    # ============================================================================
-    # БЛОК ПОДГОТОВКИ НАТИВНОГО ВЫХОДА МОДЕЛИ (CoNLL-Plus формат)
-    # ============================================================================
-    def _format_native_output(self, sentence_data: dict) -> str:
+    # ─────────────────────────────────────────────────────────
+    # FIX P7: построение id_mapping вынесено в общий приватный метод.
+    # Оригинал дублировал идентичный блок в _format_native_output
+    # и в dict-ветке parse_batch (~15 строк кода дважды).
+    # ─────────────────────────────────────────────────────────
+    def _build_id_mapping(self, sentence_data: dict) -> Dict[str, int]:
         """
-        Преобразует выход pipeline в нативный CoNLL-Plus формат (12 колонок).
+        Строит маппинг {внутренний_id_модели → порядковый_id_CoNLL-U}.
 
-        Формат CoNLL-Plus:
-        1. ID - порядковый номер токена
-        2. FORM - словоформа
-        3. LEMMA - лемма
-        4. UPOS - универсальный POS-тег
-        5. XPOS - языково-специфичный тег
-        6. FEATS - морфологические признаки
-        7. HEAD - индекс главного слова
-        8. DEPREL - тип синтаксической связи
-        9. DEPS - вторичные зависимости (Enhanced UD)
-        10. MISC - дополнительная информация
-        11. SC (Semantic Class) - семантический класс
-        12. DS (Deep Slot) - глубинный слот
-
-        :param sentence_data: словарь с данными предложения от pipeline
-        :return: строка в формате CoNLL-Plus (таблица с табуляцией)
+        Returns
+        -------
+        Dict[str, int]
+            Строковый ключ (исходный id) → int-значение (CoNLL-U 1-based id).
+            [CLS] → 0, #NULL-узлы → не включаются.
         """
-        lines = []
+        id_mapping: Dict[str, int] = {}
+        conllu_counter = 0
+        for word, word_id in zip(sentence_data["words"], sentence_data["ids"]):
+            str_id = str(word_id)
+            if word == "[CLS]":
+                # FIX P6: в оригинале dict-ветка использовала хардкод
+                #   id_mapping['1'] = '0'
+                # что предполагало: [CLS] всегда имеет word_id == "1".
+                # В _format_native_output тот же код был написан правильно:
+                #   id_mapping[str(word_id)] = 0
+                # Теперь оба места унифицированы — используем реальный word_id.
+                id_mapping[str_id] = 0
+            elif "#NULL" not in str_id:
+                conllu_counter += 1
+                id_mapping[str_id] = conllu_counter
+        return id_mapping
 
-        # ===== СОЗДАЁМ МАППИНГ СТАРЫХ ID -> НОВЫХ ID (аналогично dict-формату) =====
-        # Старые ID: 1 ([CLS]), 2 (Мама), 3 (мыла), ...
-        # Новые ID: 1 (Мама), 2 (мыла), 3 (раму), ...
-        id_mapping = {}  # старый_id -> новый_id
-        new_id = 0
-
-        for i, word_id in enumerate(sentence_data['ids']):
-            word = sentence_data['words'][i]
-            if word == '[CLS]':
-                # [CLS] маппится на 0 (root)
-                id_mapping[str(word_id)] = 0
-            else:
-                new_id += 1
-                id_mapping[str(word_id)] = new_id
-        # =============================================================================
-
-        # Обрабатываем каждый токен
-        for i, word_id in enumerate(sentence_data['ids']):
-            word = sentence_data['words'][i]
-
-            # Пропускаем служебный токен [CLS]
-            if word == '[CLS]':
-                continue
-
-            # Колонка 1: ID (новый ID из маппинга)
-            token_id = id_mapping[str(word_id)]
-
-            # Колонка 2: FORM
-            form = word
-
-            # Колонка 3: LEMMA
-            lemma = sentence_data.get('lemmas', ['_'] * len(sentence_data['words']))[i] or '_'
-
-            # Колонка 4: UPOS
-            upos = sentence_data.get('upos', ['_'] * len(sentence_data['words']))[i]
-
-            # Колонка 5: XPOS
-            xpos = sentence_data.get('xpos', ['_'] * len(sentence_data['words']))[i]
-
-            # Колонка 6: FEATS
-            feats = sentence_data.get('feats', ['_'] * len(sentence_data['words']))[i]
-
-            # Колонки 7-8: HEAD и DEPREL (базовый UD)
-            head = 0
-            deprel = '_'
-            if 'deps_ud' in sentence_data:
-                for arc_from, arc_to, rel in sentence_data['deps_ud']:
-                    if arc_to == word_id:
-                        # Используем маппинг для корректного HEAD
-                        head = id_mapping.get(str(arc_from), 0)
-                        deprel = rel
-                        break
-
-            # Колонка 9: DEPS (Enhanced UD)
-            deps = '_'
-            if 'deps_eud' in sentence_data:
-                eud_list = []
-                for arc_from, arc_to, rel in sentence_data['deps_eud']:
-                    if arc_to == word_id:
-                        # Используем маппинг для корректного HEAD
-                        eud_head = id_mapping.get(str(arc_from), 0)
-                        eud_list.append(f"{eud_head}:{rel}")
-                if eud_list:
-                    deps = '|'.join(eud_list)
-
-            # Колонка 10: MISC
-            misc = sentence_data.get('miscs', ['_'] * len(sentence_data['words']))[i] if 'miscs' in sentence_data else '_'
-
-            # Колонка 11: SC (Semantic Class) - нативное поле CoBaLD
-            sc = sentence_data.get('semclasses', ['_'] * len(sentence_data['words']))[i] if 'semclasses' in sentence_data else '_'
-
-            # Колонка 12: DS (Deep Slot) - нативное поле CoBaLD
-            ds = sentence_data.get('deepslots', ['_'] * len(sentence_data['words']))[i] if 'deepslots' in sentence_data else '_'
-
-            # Формируем строку (12 колонок через табуляцию)
-            line = f"{token_id}\t{form}\t{lemma}\t{upos}\t{xpos}\t{feats}\t{head}\t{deprel}\t{deps}\t{misc}\t{sc}\t{ds}"
-            lines.append(line)
-
-        # Возвращаем таблицу как единую строку (строки разделены \n)
-        return '\n'.join(lines)
-    # ============================================================================
-
-    @modal.method()
-    def parse_batch(self, batch_tokens: list[list[str]], output_format: str = 'dict'):
+    # ─────────────────────────────────────────────────────────
+    # FIX P2: логика разбора вынесена в _parse_batch_impl.
+    # Оригинал: parse() вызывал self.parse_batch.remote([tokens]) —
+    # полноценный network round-trip через Modal (сериализация,
+    # потенциальный спавн нового контейнера, лишняя задержка).
+    # Теперь оба публичных метода вызывают _parse_batch_impl напрямую.
+    # ─────────────────────────────────────────────────────────
+    def _parse_batch_impl(
+        self,
+        texts: List[str],
+        output_format: str = "dict",
+    ) -> List[List[Any]]:
         """
-        batch_tokens: список предложений (каждое — список токенов).
-        output_format: формат выхода - 'dict' (текущий) или 'native' (CoNLL-Plus).
+        Внутренняя реализация: разбирает список текстов.
 
-        Возвращает:
-        - Если output_format='dict': список предложений с максимально полным разбором (текущий формат).
-        - Если output_format='native': список строк в нативном формате CoNLL-Plus.
+        Returns
+        -------
+        List[List[sentence]]
+            Для каждого входного текста — список предложений.
         """
-        if not batch_tokens:
-            return []
-
         all_results = []
+        for text in texts:
+            # FIX P3: pipeline получает сырой текст и сам токенизирует razdel-ом.
+            # Оригинал принимал List[str] (токены) и делал " ".join(tokens),
+            # что создавало тройную токенизацию:
+            #   1. wrapper: razdel_tokenize(text) → tokens
+            #   2. modal:   " ".join(tokens) → text (с потерей границ!)
+            #   3. pipeline: razdel внутри preprocess() → новые токены
+            # Пример потери: ["Кружка-термос"] → join → pipeline razdel
+            #   → ["Кружка", "-", "термос"] (другой результат!)
+            decoded_sentences = self.pipeline(text, output_format="list")
 
-        for tokens in batch_tokens:
-            if not tokens:
-                all_results.append([] if output_format == 'dict' else '')
-                continue
-
-            try:
-                # Склеиваем токены обратно в текст для pipeline
-                text = " ".join(tokens)
-
-                # Pipeline возвращает List[Dict] - список предложений
-                decoded_sentences = self.pipeline(text, output_format='list')
-
-                # Берём первое предложение
-                if not decoded_sentences:
-                    all_results.append([] if output_format == 'dict' else '')
-                    continue
-
-                sentence_data = decoded_sentences[0]
-
-                # ========================================================================
-                # ВЫБОР ФОРМАТА ВЫХОДА: нативный (CoNLL-Plus) или текущий (dict)
-                # ========================================================================
-                if output_format == 'native':
-                    # Генерируем нативный CoNLL-Plus формат
-                    native_output = self._format_native_output(sentence_data)
-                    all_results.append(native_output)
+            # FIX P4: обрабатываем ВСЕ предложения текста, не только [0].
+            # Оригинал: sentence_data = decoded_sentences[0]
+            # При нескольких предложениях в тексте остальные молча терялись.
+            text_results = []
+            for sentence_data in decoded_sentences:
+                if output_format == "native":
+                    text_results.append(self._format_native_output(sentence_data))
                 else:
-                    # Текущая логика формирования dict (без изменений)
-                    # ===== НОВОЕ: СОЗДАЁМ МАППИНГ СТАРЫХ ID -> НОВЫХ ID =====
-                    # Старые ID: "1" ([CLS]), "2" (Мама), "3" (мыла), ...
-                    # Новые ID: "1" (Мама), "2" (мыла), "3" (раму), ...
-                    id_mapping = {}  # старый_id -> новый_id
-                    new_id = 0
-
-                    for i, word_id in enumerate(sentence_data['ids']):
-                        word = sentence_data['words'][i]
-                        if word == '[CLS]':
-                            # [CLS] (id=1) маппится на 0 (root)
-                            id_mapping['1'] = '0'
-                        else:
-                            new_id += 1
-                            id_mapping[str(word_id)] = str(new_id)
-                    # =========================================================
-
-                    # Преобразуем в формат токенов
-                    sent_tokens = []
-
-                    for i, word_id in enumerate(sentence_data['ids']):
-                        word = sentence_data['words'][i]
-
-                        # Фильтруем служебный [CLS] токен
-                        if word == '[CLS]':
-                            continue
-
-                        # ===== НОВОЕ: ИСПОЛЬЗУЕМ НОВЫЙ ID =====
-                        new_token_id = id_mapping[str(word_id)]
-                        # =====================================
-
-                        token = {
-                            'id': new_token_id,  # ИСПРАВЛЕНО
-                            'form': word,
-                            'lemma': sentence_data.get('lemmas', [''] * len(sentence_data['words']))[i] or '_',
-                            'upos': sentence_data.get('upos', ['_'] * len(sentence_data['words']))[i],
-                            'xpos': sentence_data.get('xpos', ['_'] * len(sentence_data['words']))[i],
-                            'feats': sentence_data.get('feats', ['_'] * len(sentence_data['words']))[i],
-                            'head': 0,
-                            'deprel': '_',
-                            'deps': '_',
-                            'misc': sentence_data.get('miscs', ['_'] * len(sentence_data['words']))[
-                                i] if 'miscs' in sentence_data else '_',
-                        }
-
-                        # Добавляем синтаксис из deps_ud
-                        if 'deps_ud' in sentence_data:
-                            for arc_from, arc_to, deprel in sentence_data['deps_ud']:
-                                if arc_to == word_id:
-                                    # ===== НОВОЕ: ИСПОЛЬЗУЕМ МАППИНГ =====
-                                    old_head = str(arc_from)
-                                    new_head = id_mapping.get(old_head, '0')
-                                    token['head'] = int(new_head)
-                                    # ======================================
-                                    token['deprel'] = deprel
-                                    break
-
-                        # Enhanced deps
-                        if 'deps_eud' in sentence_data:
-                            eud_list = []
-                            for arc_from, arc_to, deprel in sentence_data['deps_eud']:
-                                if arc_to == word_id:
-                                    # ===== НОВОЕ: ИСПОЛЬЗУЕМ МАППИНГ =====
-                                    old_head = str(arc_from)
-                                    new_head = id_mapping.get(old_head, '0')
-                                    eud_list.append(f"{new_head}:{deprel}")
-                                    # ======================================
-                            if eud_list:
-                                token['deps'] = '|'.join(eud_list)
-
-                        # Семантика
-                        if 'deepslots' in sentence_data and i < len(sentence_data['deepslots']):
-                            token['deepslot'] = sentence_data['deepslots'][i]
-                        if 'semclasses' in sentence_data and i < len(sentence_data['semclasses']):
-                            token['semclass'] = sentence_data['semclasses'][i]
-
-                        sent_tokens.append(token)
-
-                    all_results.append(sent_tokens)
-                # ========================================================================
-
-            except Exception as e:
-                self.logger.error(f"CoBaLD error: {e}")
-                import traceback
-                self.logger.error(traceback.format_exc())
-                all_results.append([] if output_format == 'dict' else '')
-
+                    text_results.append(self._build_dict(sentence_data))
+            all_results.append(text_results)
         return all_results
 
     @modal.method()
-    def parse(self, tokens: list[str], output_format: str = 'dict'):
+    def parse_batch(
+        self,
+        # FIX P3: был List[List[str]] (списки токенов), теперь List[str] (тексты)
+        texts: List[str],
+        output_format: str = "dict",
+    ) -> List[List[Any]]:
         """
-        Парсинг одного предложения.
+        Пакетный разбор списка текстов.
 
-        :param tokens: список токенов
-        :param output_format: 'dict' или 'native'
-        :return: результат разбора в указанном формате
+        Parameters
+        ----------
+        texts : List[str]
+            Сырые тексты. Токенизация выполняется внутри pipeline.
+        output_format : str
+            'dict' | 'native'
+
+        Returns
+        -------
+        List[List[sentence]]
+            Для каждого текста — список предложений.
         """
-        batch_result = self.parse_batch.remote([tokens], output_format=output_format)
-        return batch_result[0] if batch_result else ([] if output_format == 'dict' else '')
+        return self._parse_batch_impl(texts, output_format)
 
+    @modal.method()
+    def parse(
+        self,
+        # FIX P3: был List[str] (токены), теперь str (сырой текст)
+        text: str,
+        output_format: str = "dict",
+    ) -> List[Any]:
+        """
+        Разбор одного текста.
+
+        Returns
+        -------
+        List[sentence]
+            Список предложений в тексте.
+        """
+        # FIX P2: прямой вызов _parse_batch_impl без .remote() round-trip
+        result = self._parse_batch_impl([text], output_format)
+        return result[0] if result else []
+
+    # ─────────────────────────────────────────────────────────
+    # Форматирование результатов
+    # ─────────────────────────────────────────────────────────
+    @staticmethod
+    def _extract_dep(dep_ud_item) -> tuple:
+        """
+        Извлекает (head_id_str, deprel) из одного элемента deps_ud.
+
+        Реальный формат pipeline: кортеж из 3 элементов (head_id, self_id, deprel)
+        Пример: ('3', '1', 'obl')  →  head='3', deprel='obl'
+        """
+        if isinstance(dep_ud_item, (list, tuple)):
+            if len(dep_ud_item) == 3:
+                # ('head_id', 'self_id', 'deprel')  ← реальный формат CoBaLD
+                return str(dep_ud_item[0]), str(dep_ud_item[2])
+            if len(dep_ud_item) == 2:
+                # ('head_id', 'deprel')  ← fallback
+                return str(dep_ud_item[0]), str(dep_ud_item[1])
+        if isinstance(dep_ud_item, dict):
+            return str(dep_ud_item.get("head", "0")), str(dep_ud_item.get("deprel", "_"))
+        if isinstance(dep_ud_item, str) and ":" in dep_ud_item:
+            head_str, deprel = dep_ud_item.split(":", 1)
+            return head_str.strip(), deprel.strip()
+        return "0", "_"
+
+    def _build_dict(self, sentence_data: dict) -> List[Dict[str, Any]]:
+        """Токены в dict-формате (CoNLL-U + CoBaLD-специфичные поля)."""
+        id_mapping = self._build_id_mapping(sentence_data)
+        result = []
+        for i, (word, word_id, dep_ud) in enumerate(zip(
+                sentence_data["words"],
+                sentence_data["ids"],
+                sentence_data["deps_ud"],  # (head_id, self_id, deprel)
+        )):
+            str_id = str(word_id)
+            if word == "[CLS]" or "#NULL" in str_id:
+                continue
+            head_orig, deprel = self._extract_dep(dep_ud)
+            new_id = id_mapping.get(str_id, 0)
+            new_head = id_mapping.get(head_orig, 0)
+            token: Dict[str, Any] = {
+                "id": int(new_id),
+                "form": word,
+                "head": int(new_head),
+                "deprel": deprel,
+                "misc": sentence_data["miscs"][i],
+                "deepslot": sentence_data["deepslots"][i],
+                "semclass": sentence_data["semclasses"][i],
+            }
+            result.append(token)
+        return result
+
+    def _format_native_output(self, sentence_data: dict) -> List[Dict[str, Any]]:
+        """Токены в native-формате — все поля включая lemma, upos, feats, eud."""
+        id_mapping = self._build_id_mapping(sentence_data)
+        result = []
+        for i, (word, word_id, dep_ud) in enumerate(zip(
+                sentence_data["words"],
+                sentence_data["ids"],
+                sentence_data["deps_ud"],  # (head_id, self_id, deprel)
+        )):
+            str_id = str(word_id)
+            if word == "[CLS]" or "#NULL" in str_id:
+                continue
+            head_orig, deprel = self._extract_dep(dep_ud)
+            new_id = id_mapping.get(str_id, 0)
+            new_head = id_mapping.get(head_orig, 0)
+            token: Dict[str, Any] = {
+                "id": int(new_id),
+                "form": word,
+                "lemma": sentence_data["lemmas"][i],
+                "upos": sentence_data["upos"][i],
+                "xpos": sentence_data["xpos"][i],
+                "feats": sentence_data["feats"][i],
+                "head": int(new_head),
+                "deprel": deprel,
+                "deps_eud": sentence_data["deps_eud"][i],
+                "misc": sentence_data["miscs"][i],
+                "deepslot": sentence_data["deepslots"][i],
+                "semclass": sentence_data["semclasses"][i],
+                "is_null": False,
+            }
+            result.append(token)
+        return result
+
+
+# ─────────────────────── LOCAL ENTRYPOINT ────────────────────
 @app.local_entrypoint()
 def main():
-    test_tokens = [
-        ["Мама", "мыла", "раму", "."],
-        ["CoBaLD", "работает", "на", "GPU", "."],
-    ]
+    """Тестирование CoBaLD сервиса (4 комбинации)."""
+    test_single = "Мама мыла раму. Папа читал газету."
+    test_batch  = ["Он думал о море.", "Кот лежал на диване."]
 
-    print("🚀 Testing CoBaLD service...")
+    SEP = "=" * 70
+    print(f"{SEP}\nТЕСТИРОВАНИЕ COBALD SERVICE\n{SEP}")
+
     service = CobaldService()
 
-    # Тест 1: Текущий формат (dict)
-    print("\n" + "="*80)
-    print("ТЕСТ 1: Текущий формат (output_format='dict')")
-    print("="*80)
-    results_dict = service.parse_batch.remote(test_tokens, output_format='dict')
-    for i, sent in enumerate(results_dict):
-        print(f"\n📄 Sentence {i + 1}: {' '.join(test_tokens[i])}")
-        if not sent:
-            print("  [Empty result]")
-            continue
-        print(f"  Tokens: {len(sent)}")
+    # 1. parse → dict
+    print("\n1. parse (dict):")
+    result = service.parse.remote(test_single, output_format="dict")
+    print(f"   Предложений: {len(result)}")
+    for s_idx, sent in enumerate(result, 1):
+        forms = [t["form"] for t in sent]
+        print(f"   [{s_idx}] {forms}")
         for tok in sent:
-            print(
-                f"  {tok['id']}\t{tok['form']}\t{tok['lemma']}\t{tok['upos']}\t"
-                f"{tok.get('xpos', '_')}\t{tok.get('feats', '_')}\t"
-                f"{tok['head']}\t{tok['deprel']}"
-            )
+            print(f"       id={tok['id']} head={tok['head']} "
+                  f"deprel={tok['deprel']:<12} "
+                  f"deepslot={tok['deepslot']} semclass={tok['semclass']}")
 
-    # Тест 2: Нативный формат (CoNLL-Plus)
-    print("\n" + "="*80)
-    print("ТЕСТ 2: Нативный формат (output_format='native')")
-    print("="*80)
-    results_native = service.parse_batch.remote(test_tokens, output_format='native')
-    for i, sent_native in enumerate(results_native):
-        print(f"\n📄 Sentence {i + 1}: {' '.join(test_tokens[i])}")
-        if not sent_native:
-            print("  [Empty result]")
-            continue
-        print("  CoNLL-Plus format (12 columns):")
-        print(sent_native)
+    # 2. parse → native
+    print("\n2. parse (native):")
+    result = service.parse.remote(test_single, output_format="native")
+    print(f"   Предложений: {len(result)}")
+    for s_idx, sent in enumerate(result, 1):
+        print(f"   [{s_idx}] ключи токена: {list(sent[0].keys()) if sent else '—'}")
 
-    print("\n✅ Test completed!")
+    # 3. parse_batch → dict
+    print("\n3. parse_batch (dict):")
+    result = service.parse_batch.remote(test_batch, output_format="dict")
+    for t_idx, text_sents in enumerate(result):
+        total = sum(len(s) for s in text_sents)
+        print(f"   [{t_idx}] '{test_batch[t_idx]}' "
+              f"→ {len(text_sents)} предл., {total} токенов")
+
+    print(f"\n{'=' * 70}\n✅ Тестирование завершено\n{'=' * 70}")
