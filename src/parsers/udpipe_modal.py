@@ -1,12 +1,39 @@
-import modal
-import logging
+#!/usr/bin/env python3
+"""
+UDPipe Modal Service для booknlp_ru.
 
-# Образ: Python + ufal.udpipe
+Публичный метод: parse(text, output_format)
+
+  output_format="dict"    →  List[List[Dict]]
+      Стандартные поля CoNLL-U:
+      id, form, lemma, upos, xpos, feats, head, deprel, deps, misc
+      misc — raw строка CoNLL-U: "SpaceAfter=No|TokenRange=0:4"
+
+  output_format="native"  →  List[List[Dict]]
+      Те же поля CoNLL-U, но misc разобран в словарь:
+      misc — dict: {"SpaceAfter": "No", "TokenRange": "0:4"}
+      Удобен для downstream-задач (атрибуция цитат, кореференция).
+
+Примечание: UDPipe нативно работает с CoNLL-U, поэтому оба формата
+возвращают List[List[Dict]]. Различие — только в представлении поля misc.
+
+Модель: russian-syntagrus-ud-2.5 (Universal Dependencies 2.5)
+Токенизация: встроенная в UDPipe
+"""
+
+import logging
+import re
+
+import modal
+
+# ─────────────────────────────────────────────────────────────
+# DOCKER ОБРАЗ
+# ─────────────────────────────────────────────────────────────
+
 image = (
     modal.Image.debian_slim()
     .apt_install("git", "curl", "build-essential", "swig", "g++")
     .pip_install("ufal.udpipe")
-    # Скачивание модели Russian-SynTagRus 2.5 с LINDAT
     .run_commands(
         "curl -L -o /root/russian-syntagrus.udpipe "
         "https://lindat.mff.cuni.cz/repository/xmlui/bitstream/handle/11234/1-3131/"
@@ -16,198 +43,257 @@ image = (
 
 app = modal.App("booknlp-ru-udpipe")
 
-@app.cls(image=image, timeout=600)  # UDPipe работает на CPU
+
+# ─────────────────────────────────────────────────────────────
+# СЕРВИС
+# ─────────────────────────────────────────────────────────────
+
+@app.cls(image=image, timeout=600)
 class UDPipeService:
+
     @modal.enter()
     def setup(self):
         from ufal.udpipe import Model, Pipeline
 
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("UDPipeService")
-
         self.logger.info("Loading UDPipe model...")
+
         self.model = Model.load("/root/russian-syntagrus.udpipe")
         if not self.model:
-            raise RuntimeError("Cannot load UDPipe model file!")
+            raise RuntimeError("Cannot load UDPipe model!")
 
-        # Пайплайн: tokenize + tagger + parser, вывод в CoNLL-U
         self.pipeline = Pipeline(
-            self.model, "tokenize", Pipeline.DEFAULT, Pipeline.DEFAULT, "conllu"
+            self.model,
+            "tokenize",
+            Pipeline.DEFAULT,
+            Pipeline.DEFAULT,
+            "conllu",
         )
-
         self.logger.info("UDPipe loaded!")
 
-    # ============================================================================
-    # БЛОК ПОДГОТОВКИ НАТИВНОГО ВЫХОДА МОДЕЛИ (CoNLL-U формат)
-    # ============================================================================
-    def _format_native_output(self, sentences: list) -> str:
+    # ──────────────────────────────────────────────────────────
+    # Вспомогательный метод: парсинг строки MISC → dict
+    # ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_misc(misc_str: str) -> dict:
         """
-        Преобразует список предложений (список словарей) в нативный CoNLL-U формат.
+        Разбирает строку MISC в словарь.
 
-        Формат CoNLL-U (10 колонок):
-        1. ID - порядковый номер токена
-        2. FORM - словоформа
-        3. LEMMA - лемма
-        4. UPOS - универсальный POS-тег
-        5. XPOS - языково-специфичный тег
-        6. FEATS - морфологические признаки
-        7. HEAD - индекс главного слова
-        8. DEPREL - тип синтаксической связи
-        9. DEPS - вторичные зависимости (Enhanced UD)
-        10. MISC - дополнительная информация
-
-        :param sentences: список предложений (каждое - список токенов-словарей)
-        :return: строка в формате CoNLL-U (предложения разделены пустой строкой)
+        Примеры:
+            "SpaceAfter=No|TokenRange=0:4"  →  {"SpaceAfter": "No", "TokenRange": "0:4"}
+            "SpaceAfter=No"                 →  {"SpaceAfter": "No"}
+            "_"                             →  {}
+            "Translit"                      →  {"Translit": True}  # флаг без значения
         """
-        conllu_blocks = []
+        if not misc_str or misc_str == "_":
+            return {}
+        result = {}
+        for item in misc_str.split("|"):
+            if "=" in item:
+                k, _, v = item.partition("=")
+                result[k] = v
+            else:
+                result[item] = True  # флаг без значения
+        return result
 
-        for sent in sentences:
-            lines = []
-            for token in sent:
-                # Формируем строку CoNLL-U (10 колонок через табуляцию)
-                line = "\t".join([
-                    str(token.get('id', 0)),           # 1. ID
-                    token.get('form', '_'),            # 2. FORM
-                    token.get('lemma', '_'),           # 3. LEMMA
-                    token.get('upos', '_'),            # 4. UPOS
-                    token.get('xpos', '_'),            # 5. XPOS
-                    token.get('feats', '_'),           # 6. FEATS
-                    str(token.get('head', 0)),         # 7. HEAD
-                    token.get('deprel', '_'),          # 8. DEPREL
-                    token.get('deps', '_'),            # 9. DEPS
-                    token.get('misc', '_')             # 10. MISC
-                ])
-                lines.append(line)
+    # ──────────────────────────────────────────────────────────
+    # Внутренний метод: CoNLL-U строка → List[List[Dict]]
+    # ──────────────────────────────────────────────────────────
 
-            # Добавляем предложение (с пустой строкой после него)
-            conllu_blocks.append('\n'.join(lines))
-
-        # Объединяем все предложения через двойной перенос строки (стандарт CoNLL-U)
-        return '\n\n'.join(conllu_blocks)
-    # ============================================================================
-
-    def parse_text(self, text: str, output_format: str = 'dict'):
+    def _conllu_to_dict(self, conllu_str: str, parse_misc: bool = False) -> list:
         """
-        Парсит текст и возвращает результат в указанном формате.
+        Парсит CoNLL-U строку в список предложений.
 
-        :param text: входной текст
-        :param output_format: формат выхода - 'dict' (по умолчанию) или 'native'
-            - 'dict': список предложений (каждое - список словарей с токенами)
-            - 'native': строка в нативном формате CoNLL-U
-        :return: разобранный текст в указанном формате
+        Parameters
+        ----------
+        conllu_str : str
+            Вывод pipeline.process().
+        parse_misc : bool, default False
+            False → misc остаётся raw строкой CoNLL-U (dict-формат)
+            True  → misc разбирается в словарь             (native-формат)
+
+        Мультитокены (1-2) и пустые узлы (1.1) пропускаются.
+
+        Ключи токена:
+            id, form, lemma, upos, xpos, feats,
+            head, deprel, deps, misc
+        """
+        result       = []
+        current_sent = []
+
+        for line in conllu_str.split("\n"):
+            line = line.strip()
+
+            if not line or line.startswith("#"):
+                if current_sent:
+                    result.append(current_sent)
+                    current_sent = []
+                continue
+
+            parts = line.split("\t")
+            if len(parts) < 10:
+                continue
+
+            raw_id = parts[0]
+            if "-" in raw_id or "." in raw_id:
+                continue
+
+            misc_raw = parts[9]
+            misc = self._parse_misc(misc_raw) if parse_misc else misc_raw
+
+            token = {
+                "id":     int(raw_id),
+                "form":   parts[1],
+                "lemma":  parts[2],
+                "upos":   parts[3],
+                "xpos":   parts[4],
+                "feats":  parts[5],
+                "head":   int(parts[6]) if parts[6].isdigit() else 0,
+                "deprel": parts[7],
+                "deps":   parts[8],
+                "misc":   misc,
+            }
+            current_sent.append(token)
+
+        if current_sent:
+            result.append(current_sent)
+
+        return result
+
+    # ──────────────────────────────────────────────────────────
+    # Внутренний метод: парсинг текста
+    # ──────────────────────────────────────────────────────────
+
+    def parse_text(self, text: str, output_format: str = "dict") -> list:
+        """
+        Parameters
+        ----------
+        text : str
+            Входной текст.
+        output_format : str, default "dict"
+            "dict"   → List[List[Dict]], misc — raw CoNLL-U строка
+            "native" → List[List[Dict]], misc — разобранный словарь
+
+        Returns
+        -------
+        List[List[Dict]]
         """
         if not text or not text.strip():
-            return [] if output_format == 'dict' else ''
+            return []
 
         try:
-            # UDPipe возвращает CoNLL-U строку
             processed = self.pipeline.process(text)
 
-            # ========================================================================
-            # ПАРСИНГ CoNLL-U В ПРОМЕЖУТОЧНЫЙ ФОРМАТ (список словарей)
-            # ========================================================================
-            result = []
-            current_sent = []
+            if not processed or not processed.strip():
+                self.logger.error("UDPipe returned empty output.")
+                return []
 
-            for line in processed.split('\n'):
-                line = line.strip()
-
-                # Пропускаем комментарии и пустые строки
-                if not line or line.startswith('#'):
-                    if current_sent:
-                        result.append(current_sent)
-                        current_sent = []
-                    continue
-
-                # ===== ИСПРАВЛЕНО: ИЗВЛЕЧЕНИЕ ВСЕХ 10 ПОЛЕЙ CoNLL-U =====
-                parts = line.split('\t')
-                if len(parts) >= 10:  # Полный CoNLL-U формат
-                    # CoNLL-U: ID, FORM, LEMMA, UPOS, XPOS, FEATS, HEAD, DEPREL, DEPS, MISC
-                    token = {
-                        'id': int(parts[0]) if parts[0].isdigit() else 0,
-                        'form': parts[1],
-                        'lemma': parts[2],
-                        'upos': parts[3],
-                        'xpos': parts[4],  # ← НОВОЕ: добавлено XPOS
-                        'feats': parts[5],  # ← НОВОЕ: добавлено FEATS
-                        'head': int(parts[6]) if parts[6].isdigit() else 0,
-                        'deprel': parts[7],
-                        'deps': parts[8],  # ← НОВОЕ: Enhanced UD
-                        'misc': parts[9],  # ← НОВОЕ: MISC поля
-                        'startchar': 0,  # TODO: извлечь из MISC если есть TokenRange
-                        'endchar': 0
-                    }
-                    current_sent.append(token)
-                # ===== КОНЕЦ ИСПРАВЛЕНИЙ =====
-
-            if current_sent:
-                result.append(current_sent)
-            # ========================================================================
-
-            # ========================================================================
-            # ВЫБОР ФОРМАТА ВЫХОДА: нативный (CoNLL-U) или текущий (dict)
-            # ========================================================================
-            if output_format == 'native':
-                # Генерируем нативный CoNLL-U формат
-                return self._format_native_output(result)
-            else:
-                # Возвращаем текущий формат (список словарей)
-                return result
-            # ========================================================================
+            parse_misc = (output_format == "native")
+            return self._conllu_to_dict(processed, parse_misc=parse_misc)
 
         except Exception as e:
             self.logger.error(f"Parse error: {e}")
             import traceback
             self.logger.error(traceback.format_exc())
-            return [] if output_format == 'dict' else ''
+            return []
+
+    # ──────────────────────────────────────────────────────────
+    # Публичные Modal-методы
+    # ──────────────────────────────────────────────────────────
 
     @modal.method()
-    def parse(self, text: str, output_format: str = 'dict'):
-        """
-        Публичный метод для вызова через Modal.
-
-        :param text: текст для разбора
-        :param output_format: 'dict' или 'native'
-        :return: результат в указанном формате
-        """
+    def parse(self, text: str, output_format: str = "dict") -> list:
+        """Парсинг одного текста. output_format: 'dict' или 'native'."""
         return self.parse_text(text, output_format=output_format)
 
     @modal.method()
-    def parse_batch(self, texts: list, output_format: str = 'dict'):
-        """
-        Батч-обработка списка текстов.
+    def parse_batch(self, texts: list, output_format: str = "dict") -> list:
+        """Батч-обработка списка текстов."""
+        return [self.parse_text(t, output_format=output_format) for t in texts]
 
-        :param texts: список текстов
-        :param output_format: 'dict' или 'native'
-        :return: список результатов в указанном формате
-        """
-        return [self.parse_text(text, output_format=output_format) for text in texts]
 
+# ─────────────────────────────────────────────────────────────
+# ЛОКАЛЬНЫЙ ТЕСТ  (modal run src/parsers/udpipe_modal.py)
+# ─────────────────────────────────────────────────────────────
 
 @app.local_entrypoint()
 def main():
-    test_text = "Мама мыла раму."
-    print("🚀 Testing UDPipe service...")
+    import json
+    logging.basicConfig(level=logging.INFO)
+
+    TEST_TEXT = (
+        "Зло, которым ты меня пугаешь, вовсе не так зло, "
+        "как ты зло ухмыляешься."
+    )
+    SEP = "=" * 70
     service = UDPipeService()
 
-    # Тест 1: Текущий формат (dict)
-    print("\n" + "="*80)
-    print("ТЕСТ 1: Текущий формат (output_format='dict')")
-    print("="*80)
-    result_dict = service.parse.remote(test_text, output_format='dict')
-    print(f"\n📄 Result: {len(result_dict)} sentences")
-    for s_id, sent in enumerate(result_dict, 1):
-        print(f"\nSentence {s_id}: {len(sent)} tokens")
-        for tok in sent:
-            print(f"  {tok['id']}\t{tok['form']}\t{tok['lemma']}\t{tok['upos']}\t"
-                  f"{tok['xpos']}\t{tok['feats']}\t{tok['head']}\t{tok['deprel']}")
+    # ════════════════════════════════════════════
+    # 1. Dict формат (misc — raw строка)
+    # ════════════════════════════════════════════
+    print(f"\n{SEP}\nРЕЖИМ: dict  →  misc как raw CoNLL-U строка\n{SEP}")
+    result_dict = service.parse.remote(TEST_TEXT, output_format="dict")
 
-    # Тест 2: Нативный формат (CoNLL-U)
-    print("\n" + "="*80)
-    print("ТЕСТ 2: Нативный формат (output_format='native')")
-    print("="*80)
-    result_native = service.parse.remote(test_text, output_format='native')
-    print(f"\n📄 CoNLL-U format:\n")
-    print(result_native)
+    if not result_dict:
+        print("⚠ Результат пустой.")
+    else:
+        print(f"Предложений: {len(result_dict)}\n")
+        for s_idx, sent in enumerate(result_dict, 1):
+            print(f"  Предложение {s_idx}:")
+            print(f"  {'ID':<4} {'FORM':<14} {'LEMMA':<14} {'UPOS':<7} "
+                  f"{'HEAD':<5} {'DEPREL':<12} MISC")
+            print("  " + "-" * 90)
+            for t in sent:
+                print(f"  {t['id']:<4} {t['form']:<14} {t['lemma']:<14} "
+                      f"{t['upos']:<7} {t['head']:<5} {t['deprel']:<12} "
+                      f"{t['misc']}")
 
-    print("\n✅ Test completed!")
+        print(f"\nКлючи dict-токена: {list(result_dict[0][0].keys())}")
+        print(f"Тип misc:          {type(result_dict[0][0]['misc']).__name__}")
+        print("\nJSON первого токена:")
+        print(json.dumps(result_dict[0][0], ensure_ascii=False, indent=2))
+
+    # ════════════════════════════════════════════
+    # 2. Native формат (misc — dict)
+    # ════════════════════════════════════════════
+    print(f"\n{SEP}\nРЕЖИМ: native  →  misc как словарь\n{SEP}")
+    result_native = service.parse.remote(TEST_TEXT, output_format="native")
+
+    if not result_native:
+        print("⚠ Результат пустой.")
+    else:
+        print(f"Предложений: {len(result_native)}\n")
+        for s_idx, sent in enumerate(result_native, 1):
+            print(f"  Предложение {s_idx}:")
+            print(f"  {'ID':<4} {'FORM':<14} {'LEMMA':<14} {'UPOS':<7} "
+                  f"{'HEAD':<5} {'DEPREL':<12} MISC (dict)")
+            print("  " + "-" * 90)
+            for t in sent:
+                print(f"  {t['id']:<4} {t['form']:<14} {t['lemma']:<14} "
+                      f"{t['upos']:<7} {t['head']:<5} {t['deprel']:<12} "
+                      f"{t['misc']}")
+
+        print(f"\nКлючи native-токена: {list(result_native[0][0].keys())}")
+        print(f"Тип misc:            {type(result_native[0][0]['misc']).__name__}")
+        print("\nJSON первого токена:")
+        print(json.dumps(result_native[0][0], ensure_ascii=False, indent=2))
+
+    # ════════════════════════════════════════════
+    # 3. Сравнение форматов
+    # ════════════════════════════════════════════
+    if result_dict and result_native:
+        print(f"\n{SEP}\nСРАВНЕНИЕ ФОРМАТОВ\n{SEP}")
+        print(f"  Ключи одинаковы:  "
+              f"{list(result_dict[0][0].keys()) == list(result_native[0][0].keys())}")
+        print(f"\n  dict   misc: {repr(result_dict[0][0]['misc'])}")
+        print(f"  native misc: {repr(result_native[0][0]['misc'])}")
+
+        # Показываем токены с непустым misc
+        print("\n  Токены с непустым misc:")
+        for t_d, t_n in zip(result_dict[0], result_native[0]):
+            if t_d["misc"] != "_":
+                print(f"    [{t_d['form']}]")
+                print(f"      dict:   {repr(t_d['misc'])}")
+                print(f"      native: {repr(t_n['misc'])}")

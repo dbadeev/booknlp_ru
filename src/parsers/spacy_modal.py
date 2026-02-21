@@ -3,6 +3,7 @@ import logging
 from typing import List, Dict, Any, Literal
 
 # ========== ОБРАЗ ДЛЯ SPACY ==========
+
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
@@ -62,61 +63,96 @@ class SpacyService:
         # Токенизатор на базе razdel
         # ============================================================
         class RazdelTokenizer:
-            """Обертка razdel для использования в spaCy."""
+            """Обёртка razdel для использования в spaCy."""
 
             def __init__(self, vocab):
                 self.vocab = vocab
 
-            def __call__(self, text):
+            def __call__(self, text: str) -> Doc:
                 razdel_tokens = list(razdel_tokenize(text))
                 if not razdel_tokens:
                     return Doc(self.vocab, words=[], spaces=[])
-
                 words = [t.text for t in razdel_tokens]
-
                 # Определяем пробелы между токенами по символьным позициям
-                spaces = []
-                for i, token in enumerate(razdel_tokens):
-                    if i < len(razdel_tokens) - 1:
-                        next_token = razdel_tokens[i + 1]
-                        spaces.append(token.stop < next_token.start)
-                    else:
-                        spaces.append(False)
-
+                spaces = [
+                    razdel_tokens[i].stop < razdel_tokens[i + 1].start
+                    for i in range(len(razdel_tokens) - 1)
+                ] + [False]
                 return Doc(self.vocab, words=words, spaces=spaces)
 
         self.razdel_tokenizer = RazdelTokenizer(self.nlp.vocab)
 
-        # Добавляем компонент для экспорта в CoNLL-U
-        config = {
-            "ext_names": {
-                "conll_str": "conll_str",
-                "conll": "conll",
-                "conll_pd": "conll_pd"
-            },
-            "conversion_maps": {
-                "UPOS": {}, "XPOS": {}, "FEATS": {}, "DEPREL": {}
+        # FIX 3: Добавляем conll_formatter только если его ещё нет в pipeline.
+        # Без этой проверки повторный вызов setup() (при перезапуске контейнера)
+        # бросал бы ValueError: component already exists.
+        if "conll_formatter" not in self.nlp.pipe_names:
+            config = {
+                "ext_names": {
+                    "conll_str": "conll_str",
+                    "conll":     "conll",
+                    "conll_pd":  "conll_pd",
+                },
+                "conversion_maps": {
+                    "UPOS": {}, "XPOS": {}, "FEATS": {}, "DEPREL": {},
+                },
             }
-        }
-        self.nlp.add_pipe("conll_formatter", config=config, last=True)
+            self.nlp.add_pipe("conll_formatter", config=config, last=True)
 
-        self.logger.info(f"SpaCy loaded (ru_core_news_lg)!")
+        self.logger.info("SpaCy loaded (ru_core_news_lg)!")
         self.logger.info(f"Pipeline components: {self.nlp.pipe_names}")
         self.logger.info("Tokenizers available: internal (spaCy), razdel")
 
-    def _set_tokenizer(self, tokenizer_type: TokenizerType):
-        """Переключает токенизатор."""
+    # ================================================================
+    # FIX 1: Thread-safe токенизация.
+    #
+    # Оригинал мутировал self.nlp.tokenizer перед каждым вызовом:
+    #   self.nlp.tokenizer = self.razdel_tokenizer   ← shared state!
+    #   doc = self.nlp(text)
+    #
+    # При concurrency_limit > 1 (несколько параллельных запросов к одному
+    # контейнеру) это приводило к гонке — один запрос переключал токенизатор
+    # прямо в момент, когда другой уже вызвал self.nlp(text).
+    #
+    # Решение: не трогать self.nlp.tokenizer вообще.
+    # Вместо этого токенизируем текст напрямую нужным токенизатором,
+    # получая Doc, а затем прогоняем Doc через все компоненты пайплайна вручную.
+    # Каждый запрос работает со своим локальным Doc — shared state не затрагивается.
+    # ================================================================
+
+    def _make_doc(self, text: str, tokenizer_type: TokenizerType):
+        """Токенизирует текст выбранным токенизатором, не запуская пайплайн."""
         if tokenizer_type == "razdel":
-            self.nlp.tokenizer = self.razdel_tokenizer
-        else:
-            self.nlp.tokenizer = self.original_tokenizer
+            return self.razdel_tokenizer(text)
+        return self.original_tokenizer(text)
+
+    def _run_pipeline(self, doc):
+        """
+        Прогоняет уже токенизированный Doc через все компоненты пайплайна.
+        Токенизатор при этом не вызывается.
+        """
+        for _, pipe in self.nlp.pipeline:
+            doc = pipe(doc)
+        return doc
+
+    def _run_pipeline_batch(self, docs: list, batch_size: int) -> list:
+        """
+        Пакетно прогоняет список Doc-объектов через все компоненты пайплайна.
+        Компоненты с методом .pipe() обрабатываются батчами для эффективности,
+        остальные — поодиночке.
+        """
+        for _, pipe in self.nlp.pipeline:
+            if hasattr(pipe, "pipe"):
+                docs = list(pipe.pipe(docs, batch_size=batch_size))
+            else:
+                docs = [pipe(doc) for doc in docs]
+        return docs
 
     @modal.method()
     def parse(
         self,
         text: str,
         output_format: str = "native",
-        tokenizer: TokenizerType = "internal"
+        tokenizer: TokenizerType = "internal",
     ) -> Any:
         """
         Парсит сырой текст.
@@ -127,16 +163,15 @@ class SpacyService:
             tokenizer:     'internal' | 'razdel'
 
         Returns:
-            native  → List[Dict]  (предложения со всеми полями spaCy)
-            conllu  → str         (стандартный формат CoNLL-U)
+            native → List[Dict] (предложения со всеми полями spaCy)
+            conllu → str       (стандартный формат CoNLL-U)
         """
-        self._set_tokenizer(tokenizer)
-        doc = self.nlp(text)
+        doc = self._make_doc(text, tokenizer)
+        doc = self._run_pipeline(doc)
 
         if output_format == "conllu":
             return self._format_conllu(doc)
-        else:
-            return self._format_native(doc)
+        return self._format_native(doc)
 
     @modal.method()
     def parse_batch(
@@ -144,7 +179,7 @@ class SpacyService:
         texts: List[str],
         output_format: str = "native",
         tokenizer: TokenizerType = "internal",
-        batch_size: int = 32
+        batch_size: int = 32,
     ) -> List[Any]:
         """
         Пакетная обработка текстов.
@@ -155,160 +190,127 @@ class SpacyService:
             tokenizer:     'internal' | 'razdel'
             batch_size:    Размер батча
         """
-        self._set_tokenizer(tokenizer)
-        results = []
-        for doc in self.nlp.pipe(texts, batch_size=batch_size):
-            if output_format == "conllu":
-                results.append(self._format_conllu(doc))
-            else:
-                results.append(self._format_native(doc))
-        return results
+        docs = [self._make_doc(text, tokenizer) for text in texts]
+        docs = self._run_pipeline_batch(docs, batch_size)
+
+        if output_format == "conllu":
+            return [self._format_conllu(doc) for doc in docs]
+        return [self._format_native(doc) for doc in docs]
 
     def _format_native(self, doc) -> List[Dict[str, Any]]:
         """
         ПОЛНЫЙ нативный формат spaCy — ВСЕ доступные атрибуты токена.
 
         Поля уровня предложения:
-          text, start_char, end_char, entities
+            text, start_char, end_char, entities
 
         Поля каждого токена:
-          ── Позиция ──────────────────────────────────────────────────
-          id            : позиция в предложении (1-indexed)
-          start_char    : начало токена в исходном тексте
-          end_char      : конец токена в исходном тексте
-
-          ── Форма ────────────────────────────────────────────────────
-          form          : оригинальная форма (с сохранением регистра)
-          norm          : нормализованная форма (token.norm_)
-          lower         : форма в нижнем регистре (token.lower_)
-          shape         : орфографическая форма (Xxxx, dddd и т.п.)
-
-          ── Лемма и POS ──────────────────────────────────────────────
-          lemma         : лемма (контекстная, от spaCy+pymorphy3)
-          upos          : Universal POS tag
-          xpos          : язык-специфичный POS tag
-          feats         : морфологические признаки (UD формат)
-
-          ── Синтаксис ────────────────────────────────────────────────
-          head          : id главного токена (0 = root)
-          deprel        : тип синтаксической связи
-          n_lefts       : число левых зависимых
-          n_rights      : число правых зависимых
-          children      : список id всех зависимых токенов
-
-          ── Именованные сущности ─────────────────────────────────────
-          ent_type      : тип сущности (PER, LOC, ORG, ...) или None
-          ent_iob       : IOB-тег (B/I) или None
-
-          ── Метаданные ───────────────────────────────────────────────
-          is_sent_start : начало предложения
-          whitespace    : пробел после токена
-          misc          : SpaceAfter=No (если нет пробела)
-
-          ── Лексические флаги ────────────────────────────────────────
-          is_alpha      : состоит только из букв
-          is_digit      : состоит только из цифр
-          is_punct      : знак препинания
-          is_space      : пробельный символ
-          is_stop       : стоп-слово
-          is_oov        : вне словаря модели (Out Of Vocabulary)
-          like_num      : похоже на число
-          like_url      : похоже на URL
-          like_email    : похоже на email
-
-          ── Векторные поля ───────────────────────────────────────────
-          has_vector    : есть ли вектор у токена
-          cluster       : кластер Брауна (int), 0 если не определён
-
-          ── Вероятность ──────────────────────────────────────────────
-          prob          : log-вероятность токена в языке (float)
-          rank          : ранг по частоте в vocab модели (int)
-                            0 = самое частое слово, выше = реже
-                            is_oov=True → rank=0 (вне словаря)
+        ── Позиция ──────────────────────────────────────────────────
+            id          : позиция в предложении (1-indexed)
+            start_char  : начало токена в исходном тексте
+            end_char    : конец токена в исходном тексте
+        ── Форма ────────────────────────────────────────────────────
+            form        : оригинальная форма (с сохранением регистра)
+            norm        : нормализованная форма (token.norm_)
+            lower       : форма в нижнем регистре (token.lower_)
+            shape       : орфографическая форма (Xxxx, dddd и т.п.)
+        ── Лемма и POS ──────────────────────────────────────────────
+            lemma       : лемма (контекстная, от spaCy+pymorphy3)
+            upos        : Universal POS tag
+            xpos        : язык-специфичный POS tag
+            feats       : морфологические признаки (UD формат)
+        ── Синтаксис ────────────────────────────────────────────────
+            head        : id главного токена (0 = root)
+            deprel      : тип синтаксической связи
+            n_lefts     : число левых зависимых
+            n_rights    : число правых зависимых
+            children    : список id всех зависимых токенов
+        ── Именованные сущности ─────────────────────────────────────
+            ent_type    : тип сущности (PER, LOC, ORG, ...) или None
+            ent_iob     : IOB-тег (B/I) или None
+        ── Метаданные ───────────────────────────────────────────────
+            is_sent_start : начало предложения
+            whitespace    : пробел после токена
+            misc          : SpaceAfter=No | _ (всегда присутствует)
+        ── Лексические флаги ────────────────────────────────────────
+            is_alpha, is_digit, is_punct, is_space,
+            is_stop, is_oov, like_num, like_url, like_email
+        ── Векторные поля ───────────────────────────────────────────
+            has_vector  : есть ли вектор у токена
+            cluster     : кластер Брауна (int), 0 если не определён
+            vector_norm : L2-норма вектора, None если нет вектора
         """
         result = []
         for sent in doc.sents:
             sent_data = {
-                "text": sent.text,
+                "text":       sent.text,
                 "start_char": sent.start_char,
-                "end_char": sent.end_char,
-                "words": []
+                "end_char":   sent.end_char,
+                "words":      [],
             }
-
+            sent_offset = sent.start
             for token in sent:
-                sent_offset = sent.start
-
                 word_dict = {
                     # ── Позиция ──────────────────────────────────────
-                    "id":           token.i - sent_offset + 1,
-                    "start_char":   token.idx,
-                    "end_char":     token.idx + len(token.text),
-
+                    "id":         token.i - sent_offset + 1,
+                    "start_char": token.idx,
+                    "end_char":   token.idx + len(token.text),
                     # ── Форма ────────────────────────────────────────
-                    "form":         token.text,
-                    "norm":         token.norm_,
-                    "lower":        token.lower_,
-                    "shape":        token.shape_,
-
+                    "form":  token.text,
+                    "norm":  token.norm_,
+                    "lower": token.lower_,
+                    "shape": token.shape_,
                     # ── Лемма и POS ──────────────────────────────────
-                    "lemma":        token.lemma_,
-                    "upos":         token.pos_,
-                    "xpos":         token.tag_,
-                    "feats":        str(token.morph) if token.morph else "_",
-
+                    "lemma": token.lemma_,
+                    "upos":  token.pos_,
+                    "xpos":  token.tag_,
+                    "feats": str(token.morph) if token.morph else "_",
                     # ── Синтаксис ────────────────────────────────────
-                    "head":         token.head.i - sent_offset + 1
-                                    if token.head.i != token.i else 0,
-                    "deprel":       token.dep_,
-                    "n_lefts":      token.n_lefts,
-                    "n_rights":     token.n_rights,
-                    "children":     [c.i - sent_offset + 1 for c in token.children],
-
+                    "head":     token.head.i - sent_offset + 1
+                                if token.head.i != token.i else 0,
+                    "deprel":   token.dep_,
+                    "n_lefts":  token.n_lefts,
+                    "n_rights": token.n_rights,
+                    "children": [c.i - sent_offset + 1 for c in token.children],
                     # ── Именованные сущности ─────────────────────────
-                    "ent_type":     token.ent_type_ or None,
-                    "ent_iob":      token.ent_iob_
-                                    if token.ent_iob_ != "O" else None,
-
+                    "ent_type": token.ent_type_ or None,
+                    "ent_iob":  token.ent_iob_
+                                if token.ent_iob_ != "O" else None,
                     # ── Метаданные ───────────────────────────────────
                     "is_sent_start": token.is_sent_start,
-                    "whitespace":   token.whitespace_,
-
+                    "whitespace":    token.whitespace_,
+                    # FIX 2: misc присутствует всегда.
+                    # Оригинал добавлял ключ "misc" только при SpaceAfter=No,
+                    # что вызывало KeyError в любом коде, читающем tok["misc"].
+                    "misc": "SpaceAfter=No" if not token.whitespace_ else "_",
                     # ── Лексические флаги ────────────────────────────
-                    "is_alpha":     token.is_alpha,
-                    "is_digit":     token.is_digit,
-                    "is_punct":     token.is_punct,
-                    "is_space":     token.is_space,
-                    "is_stop":      token.is_stop,
-                    "is_oov":       token.is_oov,
-                    "like_num":     token.like_num,
-                    "like_url":     token.like_url,
-                    "like_email":   token.like_email,
-
+                    "is_alpha": token.is_alpha,
+                    "is_digit": token.is_digit,
+                    "is_punct": token.is_punct,
+                    "is_space": token.is_space,
+                    "is_stop":  token.is_stop,
+                    "is_oov":   token.is_oov,
+                    "like_num":   token.like_num,
+                    "like_url":   token.like_url,
+                    "like_email": token.like_email,
                     # ── Векторные поля ───────────────────────────────
-                    "has_vector":   token.has_vector,
-                    "cluster":      token.cluster,  # всегда 0
-                    "vector_norm": round(float(token.vector_norm), 6) if token.has_vector else None,
-
+                    "has_vector":  token.has_vector,
+                    "cluster":     token.cluster,
+                    "vector_norm": round(float(token.vector_norm), 6)
+                                   if token.has_vector else None,
                     # ── Вероятность ──────────────────────────────────
-                    # "prob":         token.prob,    ← убрать, всегда -20.0 (нет данных в модели)
-                    # "rank":       token.rank,       # ← ранг по частоте в vocab модели (int)
-                                                     #   0 = самое частое слово, выше = реже
-                                                     #   is_oov=True → rank=0 (вне словаря)
+                    # "prob": token.prob,  ← убрано: всегда -20.0 (нет данных)
+                    # "rank": token.rank,  ← убрано: 0 = частое, выше = реже
                 }
-
-                # misc только если нет пробела
-                if not token.whitespace_:
-                    word_dict["misc"] = "SpaceAfter=No"
-
                 sent_data["words"].append(word_dict)
 
             # Именованные сущности на уровне предложения
             ents = [
                 {
-                    "text":  ent.text,
-                    "start": ent.start - sent.start,
-                    "end":   ent.end - sent.start,
-                    "label": ent.label_,
+                    "text":       ent.text,
+                    "start":      ent.start - sent.start,
+                    "end":        ent.end   - sent.start,
+                    "label":      ent.label_,
                     "start_char": ent.start_char,
                     "end_char":   ent.end_char,
                 }
@@ -316,7 +318,6 @@ class SpacyService:
             ]
             if ents:
                 sent_data["entities"] = ents
-
             result.append(sent_data)
         return result
 
@@ -329,10 +330,11 @@ class SpacyService:
 
 
 # ========== ТЕСТОВАЯ ТОЧКА ВХОДА ==========
+
 @app.local_entrypoint()
 def main():
     """Тестирование SpaCy сервиса с разными токенизаторами."""
-    test_text = 'Кружка-термос стоит 500р. Москва-река.'
+    test_text = "Кружка-термос стоит 500р. Москва-река."
 
     print("=" * 80)
     print("ТЕСТИРОВАНИЕ SPACY SERVICE (4 варианта)")
@@ -345,12 +347,14 @@ def main():
     result = service.parse.remote(test_text, output_format="native", tokenizer="internal")
     for s in result:
         print(f"  [{len(s['words'])} токенов] {[w['form'] for w in s['words']]}")
+        print(f"  misc-значения: {[w['misc'] for w in s['words']]}")
 
     # Тест 2: native + razdel
     print("\n2. NATIVE + RAZDEL:")
     result = service.parse.remote(test_text, output_format="native", tokenizer="razdel")
     for s in result:
         print(f"  [{len(s['words'])} токенов] {[w['form'] for w in s['words']]}")
+        print(f"  misc-значения: {[w['misc'] for w in s['words']]}")
 
     # Тест 3: conllu + internal
     print("\n3. CONLL-U + INTERNAL:")

@@ -1,244 +1,137 @@
 #!/usr/bin/env python3
 """
-Slovnet Wrapper для booknlp_ru проекта.
+Slovnet Wrapper — клиент для SlovnetService на Modal.
 
-Использует:
-1. Razdel для токенизации (стандарт для русского NLP)
-2. Modal для удаленного выполнения Slovnet+Natasha парсинга
-3. Возвращает полный разбор: морфология, синтаксис, NER с normal и fact
+Требует предварительного деплоя:
+    modal deploy src/parsers/slovnet_modal.py
 
-Аналог cobald_wrapper.py
+Запуск тестов:
+    python src/parsers/slovnet_wrapper.py
 """
 
 import logging
+from typing import Any, Dict, List, Union
+
 import modal
-from typing import List, Dict, Any
-from razdel import tokenize as razdel_tokenize
 
 logger = logging.getLogger(__name__)
+
+APP_NAME      = "booknlp-ru-slovnet"
+METHOD_NAME   = "SlovnetService.parse_text"
 
 
 class SlovnetParser:
     """
-    Wrapper для Slovnet парсера с поддержкой Modal.
+    Клиентская обёртка над задеплоенным Modal-сервисом SlovnetService.
 
-    Архитектура:
-    - Локально: токенизация через Razdel
-    - Remote (Modal): полный парсинг через Slovnet + Natasha
+    Требует: modal deploy slovnet_modal.py
     """
 
     def __init__(self):
-        """Инициализация соединения с Modal."""
-        self.logger = logging.getLogger(__name__)
+        # Cls.from_name — ленивый метод, не обращается к серверу до первого вызова.
+        # Требует задеплоенного приложения: modal deploy slovnet_modal.py
+        SlovnetService = modal.Cls.from_name(APP_NAME, "SlovnetService")
+        self._service = SlovnetService()
+        logger.info(
+            f"SlovnetParser подключён к Modal-приложению '{APP_NAME}'."
+        )
 
-        try:
-            # Подключаемся к Modal сервису
-            self.service = modal.Cls.from_name("booknlp-ru-slovnet", "SlovnetService")()
-            self.logger.info("✓ Connected to Slovnet via Modal.")
-        except Exception as e:
-            self.logger.error(f"✗ Failed to connect to Modal: {e}")
-            raise e
+    def parse_text(
+        self,
+        text: str,
+        output_format: str = "conllu",
+    ) -> Union[List[List[Dict[str, Any]]], Dict[str, Any]]:
+        return self._service.parse_text.remote(text, output_format=output_format)
 
-    def parse_text(self, text: str, include_ner: bool = True) -> List[List[Dict[str, Any]]]:
-        """
-        Токенизирует текст (Razdel) и отправляет в Slovnet для парсинга.
-
-        Parameters:
-        -----------
-        text : str
-            Исходный текст для парсинга
-        include_ner : bool, optional
-            Включать ли NER spans (с normal и fact через Natasha)
-            По умолчанию True
-
-        Returns:
-        --------
-        List[List[Dict[str, Any]]]
-            Список предложений, каждое - список токенов с разметкой:
-            [
-                [  # Предложение 1
-                    {
-                        "id": 1,
-                        "form": "Александр",
-                        "lemma": "_",  # Slovnet не предоставляет
-                        "upos": "PROPN",
-                        "xpos": "_",
-                        "feats": "{'Animacy': 'Anim', 'Case': 'Nom', ...}",
-                        "head": 4,
-                        "deprel": "nsubj",
-                        "deps": "_",
-                        "misc": "_"
-                    },
-                    ...
-                ],
-                ...
-            ]
-
-        Notes:
-        ------
-        - Токенизация выполняется локально через Razdel
-        - Парсинг выполняется удаленно через Modal
-        - Для получения NER spans используйте parse_text_with_ner()
-        """
-        try:
-            # 1. Токенизация через Razdel (стандарт для русского NLP)
-            tokens_gen = razdel_tokenize(text)
-            tokens = [_.text for _ in tokens_gen]
-
-            if not tokens:
-                self.logger.warning("Empty tokens after tokenization")
-                return []
-
-            # 2. Отправка в Modal для парсинга
-            # Возвращает список словарей в CoNLL-U подобном формате
-            parsed_sent = self.service.parse.remote(tokens, text if include_ner else None)
-
-            if not parsed_sent:
-                self.logger.warning("Empty result from Modal service")
-                return []
-
-            # 3. Возвращаем как список предложений (одно предложение)
-            return [parsed_sent]
-
-        except Exception as e:
-            self.logger.error(f"Error during Slovnet parsing: {e}")
-            return []
-
-    def parse_text_with_ner(self, text: str) -> Dict[str, Any]:
-        """
-        Полный парсинг с NER spans (включая normal и fact).
-
-        Parameters:
-        -----------
-        text : str
-            Исходный текст для парсинга
-
-        Returns:
-        --------
-        Dict[str, Any]
-            {
-                "tokens": [список токенов с разметкой],
-                "spans": [
-                    {
-                        "start": 0,
-                        "stop": 26,
-                        "type": "PER",
-                        "text": "Александр Сергеевич Пушкин",
-                        "normal": "Александр Сергеевич Пушкин",
-                        "fact": {
-                            "first": "Александр",
-                            "middle": "Сергеевич",
-                            "last": "Пушкин"
-                        }
-                    },
-                    ...
-                ]
-            }
-
-        Notes:
-        ------
-        Использует Natasha для извлечения normal и fact
-        """
-        try:
-            # 1. Токенизация
-            tokens_gen = razdel_tokenize(text)
-            tokens = [_.text for _ in tokens_gen]
-
-            if not tokens:
-                return {"tokens": [], "spans": []}
-
-            # 2. Полный парсинг с NER через Modal
-            result = self.service.parse_with_ner.remote(tokens, text)
-
-            return result
-
-        except Exception as e:
-            self.logger.error(f"Error during Slovnet NER parsing: {e}")
-            return {"tokens": [], "spans": []}
-
-    def parse_batch(self, texts: List[str], include_ner: bool = False) -> List[List[List[Dict[str, Any]]]]:
-        """
-        Батч-парсинг нескольких текстов.
-
-        Parameters:
-        -----------
-        texts : List[str]
-            Список текстов для парсинга
-        include_ner : bool, optional
-            Включать ли NER spans
-
-        Returns:
-        --------
-        List[List[List[Dict[str, Any]]]]
-            Список результатов для каждого текста
-        """
-        results = []
-
-        for text in texts:
-            try:
-                result = self.parse_text(text, include_ner=include_ner)
-                results.append(result)
-            except Exception as e:
-                self.logger.error(f"Error parsing text in batch: {e}")
-                results.append([])
-
-        return results
-
-
-# ============================================================
-# ТЕСТ
-# ============================================================
+# ─────────────────────────────────────────────────────────────
+# Точка входа — тестовые примеры
+# ─────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
+    import json
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(message)s")
 
-    print("="*70)
-    print("ТЕСТ SLOVNET WRAPPER")
-    print("="*70)
-
-    # Инициализация
     parser = SlovnetParser()
+    TEST_TEXT = "Александр Сергеевич Пушкин родился в Москве в 1799 году."
+    SEP = "=" * 70
 
-    # Тестовый текст
-    test_text = "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
+    # ════════════════════════════════════════════
+    # 1. CoNLL-U
+    # ════════════════════════════════════════════
+    print(f"\n{SEP}\nРЕЖИМ: conllu  →  List[List[Dict]]\n{SEP}")
+    result_conllu = parser.parse_text(TEST_TEXT, output_format="conllu")
+    print(f"Предложений: {len(result_conllu)}\n")
+    for s_idx, sent in enumerate(result_conllu, 1):
+        print(f"  Предложение {s_idx}:")
+        print(f"  {'ID':<4} {'FORM':<14} {'UPOS':<7} {'FEATS':<36} "
+              f"{'HEAD':<5} {'DEPREL':<10} START  END")
+        print("  " + "-" * 92)
+        for t in sent:
+            feats_d = (t["feats"][:34] + "..") if len(t["feats"]) > 36 else t["feats"]
+            print(f"  {t['id']:<4} {t['form']:<14} {t['upos']:<7} {feats_d:<36} "
+                  f"{t['head']:<5} {t['deprel']:<10} {t['startchar']}  {t['endchar']}")
 
-    print(f"\nТекст: {test_text}")
+    print(f"\nКлючи conllu-токена: {list(result_conllu[0][0].keys())}")
+    print("\nJSON первого токена:")
+    print(json.dumps(result_conllu[0][0], ensure_ascii=False, indent=2))
+    # ════════════════════════════════════════════
+    # 2. Native
+    # ════════════════════════════════════════════
+    print(f"\n{SEP}\nРЕЖИМ: native  →  Dict{{'tokens': [...], 'spans': [...]}}\n{SEP}")
+    result_native = parser.parse_text(TEST_TEXT, output_format="native")
+    tokens = result_native["tokens"]
+    spans  = result_native["spans"]
 
-    # 1. Базовый парсинг (без NER)
-    print("\n" + "-"*70)
-    print("1. БАЗОВЫЙ ПАРСИНГ (CoNLL-U формат)")
-    print("-"*70)
+    print(f"Токенов: {len(tokens)},  Spans (NER): {len(spans)}\n")
 
-    result = parser.parse_text(test_text, include_ner=False)
+    # ── Таблица токенов: все поля ──────────────────────────────
+    print(f"  {'ID':<4} {'TEXT':<14} {'POS':<7} {'FEATS':<46} "
+          f"{'HEAD_ID':<8} {'REL':<12} {'START':<6} STOP")
+    print("  " + "-" * 110)
+    for t in tokens:
+        # feats — словарь или None → строка K=V|K=V
+        if isinstance(t["feats"], dict):
+            feats_s = "|".join(f"{k}={v}" for k, v in sorted(t["feats"].items()))
+        else:
+            feats_s = str(t["feats"]) if t["feats"] else "None"
+        feats_d = (feats_s[:44] + "..") if len(feats_s) > 46 else feats_s
 
-    if result and result[0]:
-        for token in result[0]:
-            print(f"[{token['id']}] {token['form']:15} "
-                  f"pos={token['upos']:8} "
-                  f"head={token['head']} "
-                  f"deprel={token['deprel']}")
+        print(f"  {t['id']:<4} {t['text']:<14} {str(t['pos']):<7} "
+              f"{feats_d:<46} {str(t['head_id']):<8} {str(t['rel']):<12} "
+              f"{t['start']:<6} {t['stop']}")
 
-    # 2. Парсинг с NER
-    print("\n" + "-"*70)
-    print("2. ПОЛНЫЙ ПАРСИНГ С NER")
-    print("-"*70)
+    # ── JSON-дамп первых двух токенов целиком ─────────────────
+    print(f"\nКлючи native-токена: {list(tokens[0].keys())}")
+    print("\nJSON первых двух токенов (все поля):")
+    print(json.dumps(tokens[:2], ensure_ascii=False, indent=2, default=str))
 
-    result_ner = parser.parse_text_with_ner(test_text)
+    # ── Spans: все поля ───────────────────────────────────────
+    if spans:
+        print(f"\nSpans ({len(spans)}):")
+        for sp in spans:
+            print(f"\n  [{sp['start']}:{sp['stop']}]  type={sp['type']}")
+            print(f"    text   = '{sp.get('text', '')}'")
+            print(f"    normal = '{sp.get('normal', '')}'")
+            if sp.get("fact"):
+                print(f"    fact:")
+                for k, v in sp["fact"].items():
+                    print(f"      {k:<8} = '{v}'")
+            else:
+                print(f"    fact   = None")
+        # JSON-дамп первого span целиком
+        print(f"\nJSON первого span (все поля):")
+        print(json.dumps(spans[0], ensure_ascii=False, indent=2, default=str))
+    else:
+        print("\nSpans: []")
 
-    print(f"\nТокенов: {len(result_ner.get('tokens', []))}")
-    print(f"Spans: {len(result_ner.get('spans', []))}")
-
-    if result_ner.get('spans'):
-        print("\nИменованные сущности:")
-        for i, span in enumerate(result_ner['spans'], 1):
-            print(f"\n  Сущность #{i}:")
-            print(f"    type:   {span.get('type')}")
-            print(f"    text:   \"{span.get('text')}\"")
-            if span.get('normal'):
-                print(f"    normal: \"{span.get('normal')}\"")
-            if span.get('fact'):
-                print(f"    fact:   {span.get('fact')}")
-
-    print("\n" + "="*70)
-    print("ТЕСТ ЗАВЕРШЕН ✓")
-    print("="*70)
+    # ════════════════════════════════════════════
+    # 3. Сравнение ключей и feats
+    # ════════════════════════════════════════════
+    print(f"\n{SEP}\nСРАВНЕНИЕ КЛЮЧЕЙ И ФОРМАТА FEATS\n{SEP}")
+    ck = set(result_conllu[0][0].keys())
+    nk = set(tokens[0].keys())
+    print(f"  Только в conllu: {sorted(ck - nk)}")
+    print(f"  Только в native: {sorted(nk - ck)}")
+    print(f"\n  conllu feats (строка CoNLL-U): {repr(result_conllu[0][0]['feats'])}")
+    print(f"  native feats (dict|None):       {repr(tokens[0]['feats'])}")
