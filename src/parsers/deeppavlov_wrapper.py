@@ -28,12 +28,14 @@ class DeepPavlovParser:
             self,
             text: str,
             output_format: str = "dict",
+            sentence_batch_size: int = 32,
     ) -> Union[List[List[Dict[str, Any]]], str, Dict[str, Any]]:
         try:
             if self.tokenizer_type == "razdel":
                 return self.service.parse_text.remote(
                     text,
                     output_format=output_format,
+                    sentence_batch_size=sentence_batch_size,
                 )
             elif self.tokenizer_type == "native":
                 if output_format == "full":
@@ -69,7 +71,10 @@ class DeepPavlovParser:
                 return list(
                     self.service.parse_text_native.map(
                         texts,
-                        kwargs={"output_format": output_format},
+                        kwargs={
+                            "output_format": output_format,
+                            "sentence_batch_size": sentence_batch_size,  # ← добавить
+                        },
                     )
                 )
             else:

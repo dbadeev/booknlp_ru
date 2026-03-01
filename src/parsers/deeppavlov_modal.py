@@ -324,50 +324,6 @@ class DeepPavlovService:
                 deps_probas_all.append([{'root': 0.95} for _ in range(sent_len)])
 
         return upos_probas_all, heads_probas_all, deps_probas_all
-    #
-    # def _parse_with_probas(
-    #     self,
-    #     tokenized_sentences: List[List[str]],
-    #     token_spans: List[List[tuple]]
-    # ) -> Dict[str, Any]:
-    #
-    #     parsed_batch = self.model(tokenized_sentences)
-    #
-    #     sentences_dict = self._parse_batch_to_dicts(parsed_batch, token_spans)
-    #     upos_probas, heads_probas, deps_probas = self._extract_real_probas(
-    #         tokenized_sentences, sentences_dict
-    #     )
-    #
-    #     for sent_idx, sent_tokens in enumerate(sentences_dict):
-    #         for tok_idx, token in enumerate(sent_tokens):
-    #             if sent_idx < len(upos_probas) and tok_idx < len(upos_probas[sent_idx]):
-    #                 token['upos_proba'] = upos_probas[sent_idx][tok_idx]
-    #             else:
-    #                 token['upos_proba'] = 0.95
-    #
-    #             if sent_idx < len(heads_probas) and tok_idx < len(heads_probas[sent_idx]):
-    #                 token['heads_proba'] = heads_probas[sent_idx][tok_idx]
-    #             else:
-    #                 token['heads_proba'] = [1.0/(len(sent_tokens)+1)] * (len(sent_tokens)+1)
-    #
-    #             if sent_idx < len(deps_probas) and tok_idx < len(deps_probas[sent_idx]):
-    #                 token['deps_proba'] = deps_probas[sent_idx][tok_idx]
-    #             else:
-    #                 token['deps_proba'] = {'root': 0.95}
-    #
-    #     result = {
-    #         'format': 'full',
-    #         'conllu': self._format_connlu_output(sentences_dict),
-    #         'sentences': sentences_dict,
-    #         'metadata': {
-    #             'model': 'ru_syntagrus_joint_parsing',
-    #             'tokenizer': 'razdel',
-    #             'vocab': {'deprels': self._get_deprel_vocab()},
-    #             'probas_source': 'real_from_raw_logits'
-    #         }
-    #     }
-    #
-    #     return result
 
     def _parse_with_probas(
             self,
@@ -454,7 +410,7 @@ class DeepPavlovService:
             ])
 
         if output_format == "full":
-            return self._parse_with_probas(tokenized_sentences, token_spans)
+            return self._parse_with_probas(tokenized_sentences, token_spans, sentence_batch_size)
 
         results: List[List[Dict[str, Any]]] = []
         for chunk_start in range(0, len(tokenized_sentences), sentence_batch_size):
@@ -465,17 +421,6 @@ class DeepPavlovService:
                     parsed_chunk, token_spans[chunk_start:chunk_end]
                 )
             )
-
-        # all_dicts = []
-        # for i in range(0, len(tokenized_sentences), sentence_batch_size):
-        #     chunk = tokenized_sentences[i:i + sentence_batch_size]
-        #     spans_chunk = token_spans[i:i + sentence_batch_size]
-        #     parsed = self.model(chunk)
-        #     all_dicts.extend(self._parse_batch_to_dicts(parsed, spans_chunk))
-        #
-        #
-        # parsed_batch = self.model(tokenized_sentences)
-        # results = self._parse_batch_to_dicts(parsed_batch, token_spans)
 
         if output_format == "conllu":
             return self._format_connlu_output(results)
@@ -534,23 +479,6 @@ class DeepPavlovService:
 
         return results
 
-    # @modal.method()
-    # def parse_text_native(
-    #     self,
-    #     text: str,
-    #     output_format: str = 'dict'
-    # ) -> Union[List, str, Dict]:
-    #     parsed_batch = self.model([text])
-    #
-    #     # token_spans пустые — offsets при нативном токенизаторе недоступны
-    #     token_spans = [[] for _ in parsed_batch]
-    #     results = self._parse_batch_to_dicts(parsed_batch, token_spans)
-    #
-    #     if output_format == 'conllu':
-    #         return self._format_connlu_output(results)
-    #     else:
-    #         return results
-
     @modal.method()
     def parse_text_native(
         self,
@@ -587,7 +515,8 @@ def main():
         "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
     )
 
-    service = DeepPavlovService()
+    # service = DeepPavlovService()
+    service: Any = DeepPavlovService()  # type: ignore[call-arg]
     print(f"\n{SEP}")
     print("🚀 Testing DeepPavlov (production)")
     print(f"   Text: {TEST_TEXT}")
