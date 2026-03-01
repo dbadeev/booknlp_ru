@@ -19,7 +19,7 @@ image = (
         "transformers==4.35.2",
     )
     .env({
-        "PYTHONPATH": f"{REMOTEROOT}:{REMOTESRC}:$PYTHONPATH",
+        "PYTHONPATH": f"{REMOTEROOT}:{REMOTESRC}",
         "ACCELERATE_DISABLE_MAPPING": "1",
         "ACCELERATE_USE_CPU": "0",
     })
@@ -125,6 +125,12 @@ class CobaldService:
         List[List[sentence]]
             Для каждого входного текста — список предложений.
         """
+        if output_format not in ("dict", "native"):
+            raise ValueError(
+                f"Неизвестный output_format={output_format!r}. "
+                "Допустимые значения: 'dict', 'native'."
+            )
+
         all_results = []
         for text in texts:
             # FIX P3: pipeline получает сырой текст и сам токенизирует razdel-ом.
@@ -135,6 +141,9 @@ class CobaldService:
             #   3. pipeline: razdel внутри preprocess() → новые токены
             # Пример потери: ["Кружка-термос"] → join → pipeline razdel
             #   → ["Кружка", "-", "термос"] (другой результат!)
+            if not text or not text.strip():
+                all_results.append([])
+                continue
             decoded_sentences = self.pipeline(text, output_format="list")
 
             # FIX P4: обрабатываем ВСЕ предложения текста, не только [0].
@@ -221,25 +230,32 @@ class CobaldService:
         """Токены в dict-формате (CoNLL-U + CoBaLD-специфичные поля)."""
         id_mapping = self._build_id_mapping(sentence_data)
         result = []
-        for i, (word, word_id, dep_ud) in enumerate(zip(
+
+        lengths = {k: len(sentence_data[k]) for k in
+                   ("words", "ids", "deps_ud", "miscs", "deepslots", "semclasses")}
+        if len(set(lengths.values())) != 1:
+            raise ValueError(f"Длины массивов расходятся: {lengths}")
+
+        for word, word_id, dep_ud, misc, deepslot, semclass in zip(
                 sentence_data["words"],
                 sentence_data["ids"],
-                sentence_data["deps_ud"],  # (head_id, self_id, deprel)
-        )):
+                sentence_data["deps_ud"],
+                sentence_data["miscs"],
+                sentence_data["deepslots"],
+                sentence_data["semclasses"],
+        ):
             str_id = str(word_id)
             if word == "[CLS]" or "#NULL" in str_id:
                 continue
             head_orig, deprel = self._extract_dep(dep_ud)
-            new_id = id_mapping.get(str_id, 0)
-            new_head = id_mapping.get(head_orig, 0)
             token: Dict[str, Any] = {
-                "id": int(new_id),
+                "id": int(id_mapping.get(str_id, 0)),
                 "form": word,
-                "head": int(new_head),
+                "head": int(id_mapping.get(head_orig, 0)),
                 "deprel": deprel,
-                "misc": sentence_data["miscs"][i],
-                "deepslot": sentence_data["deepslots"][i],
-                "semclass": sentence_data["semclasses"][i],
+                "misc": misc,
+                "deepslot": deepslot,
+                "semclass": semclass,
             }
             result.append(token)
         return result
@@ -248,30 +264,44 @@ class CobaldService:
         """Токены в native-формате — все поля включая lemma, upos, feats, eud."""
         id_mapping = self._build_id_mapping(sentence_data)
         result = []
-        for i, (word, word_id, dep_ud) in enumerate(zip(
+
+        lengths = {k: len(sentence_data[k]) for k in (
+            "words", "ids", "deps_ud", "lemmas", "upos", "xpos",
+            "feats", "deps_eud", "miscs", "deepslots", "semclasses",
+        )}
+        if len(set(lengths.values())) != 1:
+            raise ValueError(f"Длины массивов расходятся: {lengths}")
+
+        for word, word_id, dep_ud, lemma, upos, xpos, feats, deps_eud, misc, deepslot, semclass in zip(
                 sentence_data["words"],
                 sentence_data["ids"],
-                sentence_data["deps_ud"],  # (head_id, self_id, deprel)
-        )):
+                sentence_data["deps_ud"],
+                sentence_data["lemmas"],
+                sentence_data["upos"],
+                sentence_data["xpos"],
+                sentence_data["feats"],
+                sentence_data["deps_eud"],
+                sentence_data["miscs"],
+                sentence_data["deepslots"],
+                sentence_data["semclasses"],
+        ):
             str_id = str(word_id)
             if word == "[CLS]" or "#NULL" in str_id:
                 continue
             head_orig, deprel = self._extract_dep(dep_ud)
-            new_id = id_mapping.get(str_id, 0)
-            new_head = id_mapping.get(head_orig, 0)
             token: Dict[str, Any] = {
-                "id": int(new_id),
+                "id": int(id_mapping.get(str_id, 0)),
                 "form": word,
-                "lemma": sentence_data["lemmas"][i],
-                "upos": sentence_data["upos"][i],
-                "xpos": sentence_data["xpos"][i],
-                "feats": sentence_data["feats"][i],
-                "head": int(new_head),
+                "lemma": lemma,
+                "upos": upos,
+                "xpos": xpos,
+                "feats": feats,
+                "head": int(id_mapping.get(head_orig, 0)),
                 "deprel": deprel,
-                "deps_eud": sentence_data["deps_eud"][i],
-                "misc": sentence_data["miscs"][i],
-                "deepslot": sentence_data["deepslots"][i],
-                "semclass": sentence_data["semclasses"][i],
+                "deps_eud": deps_eud,
+                "misc": misc,
+                "deepslot": deepslot,
+                "semclass": semclass,
                 "is_null": False,
             }
             result.append(token)

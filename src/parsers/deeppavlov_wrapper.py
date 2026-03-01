@@ -6,7 +6,6 @@
 import logging
 import modal
 from typing import List, Dict, Any, Literal, Union
-import json
 
 logger = logging.getLogger(__name__)
 
@@ -21,60 +20,63 @@ class DeepPavlovParser:
         try:
             self.service = modal.Cls.from_name("booknlp-ru-deeppavlov", "DeepPavlovService")()
             self.logger.info(f"Connected to DeepPavlov via Modal (tokenizer: {tokenizer}).")
-        except Exception as e:
-            self.logger.error(f"Failed to connect to Modal app: {e}")
-            raise e
+        except Exception as e2:
+            self.logger.error(f"Failed to connect to Modal app: {e2}")
+            raise e2
 
     def parse_text(
-        self, 
-        text: str, 
-        output_format: str = 'dict',
-        use_cache: bool = False
+            self,
+            text: str,
+            output_format: str = "dict",
     ) -> Union[List[List[Dict[str, Any]]], str, Dict[str, Any]]:
-        """Парсит текст с выбранным токенизатором."""
         try:
-            if self.tokenizer_type == 'razdel':
-                results = self.service.parse_text.remote(
-                    text, 
+            if self.tokenizer_type == "razdel":
+                return self.service.parse_text.remote(
+                    text,
                     output_format=output_format,
-                    use_cache=use_cache
                 )
-            elif self.tokenizer_type == 'native':
-                if output_format == 'full':
+            elif self.tokenizer_type == "native":
+                if output_format == "full":
                     self.logger.warning("Full format not supported with native tokenizer.")
-                    output_format = 'dict'
-                results = self.service.parse_text_native.remote(text, output_format=output_format)
+                    output_format = "dict"
+                return self.service.parse_text_native.remote(
+                    text,
+                    output_format=output_format,
+                )
             else:
                 raise ValueError(f"Unknown tokenizer: {self.tokenizer_type}")
-
-            return results if results else ([] if output_format == 'dict' else '')
-        except Exception as e:
-            self.logger.error(f"Error during DeepPavlov parsing: {e}")
-            raise e
+        except Exception as e2:
+            self.logger.error(f"Error during DeepPavlov parsing: {e2}")
+            raise
 
     def parse_batch(
-        self, 
-        texts: List[str], 
-        output_format: str = 'dict',
-        use_cache: bool = False
-    ) -> Union[List, List[str], List[Dict]]:
-        """Парсит батч текстов."""
+            self,
+            texts: List[str],
+            output_format: str = "dict",
+            sentence_batch_size: int = 32,
+    ) -> Union[List[List[List[Dict[str, Any]]]], List[str]]:
         try:
-            if self.tokenizer_type == 'razdel':
-                return self.service.parse_batch.remote(texts, output_format=output_format, use_cache=use_cache)
-            elif self.tokenizer_type == 'native':
-                if output_format == 'full':
+            if self.tokenizer_type == "razdel":
+                return self.service.parse_batch.remote(
+                    texts,
+                    output_format=output_format,
+                    sentence_batch_size=sentence_batch_size,
+                )
+            elif self.tokenizer_type == "native":
+                if output_format == "full":
                     self.logger.warning("Full format not supported with native tokenizer.")
-                    output_format = 'dict'
-                return [
-                    self.service.parse_text_native.remote(text, output_format=output_format) 
-                    for text in texts
-                ]
+                    output_format = "dict"
+                return list(
+                    self.service.parse_text_native.map(
+                        texts,
+                        kwargs={"output_format": output_format},
+                    )
+                )
             else:
                 raise ValueError(f"Unknown tokenizer: {self.tokenizer_type}")
-        except Exception as e:
-            self.logger.error(f"Error during DeepPavlov batch parsing: {e}")
-            raise e
+        except Exception as e2:
+            self.logger.error(f"Error during DeepPavlov batch parsing: {e2}")
+            raise
 
 
 if __name__ == "__main__":
@@ -86,7 +88,6 @@ if __name__ == "__main__":
     parser_args = argparse.ArgumentParser(description='Test DeepPavlov parser')
     parser_args.add_argument('--tokenizer', type=str, choices=['razdel', 'native'], default='razdel')
     parser_args.add_argument('--output-format', type=str, choices=['dict', 'conllu', 'full', 'both'], default='both')
-    parser_args.add_argument('--use-cache', action='store_true')
     args = parser_args.parse_args()
 
     test_text = "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
@@ -95,7 +96,6 @@ if __name__ == "__main__":
     print(f"{'=' * 70}")
     print(f"🚀 Testing DeepPavlov with {args.tokenizer.upper()} tokenizer")
     print(f"   Output format: {args.output_format.upper()}")
-    print(f"   Caching: {'ENABLED' if args.use_cache else 'DISABLED'}")
     print(f"{'=' * 70}")
 
     try:
@@ -112,7 +112,7 @@ if __name__ == "__main__":
             print(f"📊 ВАРИАНТ 1: STANDARD (dict)")
             print(f"{'═'*70}")
 
-            result_dict = parser.parse_text(test_text, output_format='dict', use_cache=args.use_cache)
+            result_dict = parser.parse_text(test_text, output_format='dict')
             sentences = result_dict
             print(f"\nReceived {len(sentences)} sentence(s)")
 
@@ -123,7 +123,8 @@ if __name__ == "__main__":
             print(f"📄 DeepPavlov Joint Parsing ({args.tokenizer})")
             print(f"{'─'*70}")
             if not df.empty:
-                cols = ['id', 'form', 'lemma', 'upos', 'head', 'deprel']
+                # cols = ['id', 'form', 'lemma', 'upos', 'head', 'deprel']
+                cols = ["id", "form", "lemma", "upos", "xpos", "feats", "head", "deprel", "deps", "misc"]
                 available_cols = [col for col in cols if col in df.columns]
                 print(df[available_cols].to_string(index=False))
 
@@ -146,7 +147,7 @@ if __name__ == "__main__":
             print(f"📊 ВАРИАНТ 2: FULL (с probas)")
             print(f"{'═'*70}")
 
-            result_full = parser.parse_text(test_text, output_format='full', use_cache=args.use_cache)
+            result_full = parser.parse_text(test_text, output_format='full')
 
             print(f"\n📋 Structure:")
             print(f"  format: {result_full['format']}")
@@ -155,13 +156,12 @@ if __name__ == "__main__":
 
             # Выводим ПЕРВЫЕ 3 ТОКЕНА детально
             print(f"\n{'─'*70}")
-            print(f"📊 First 3 tokens with probas:")
+            print(f"📊 Tokens with probas:")
             print(f"{'─'*70}")
 
             if result_full['sentences']:
                 first_sent = result_full['sentences'][0]
                 for tok_idx, token in enumerate(first_sent, 1):
-                # for tok_idx, token in enumerate(first_sent[:3], 1):
                     print(f"\n  [{tok_idx}] {token['form']}")
                     print(f"      {'─'*62}")
                     print(f"      ID: {token['id']}")
@@ -208,10 +208,6 @@ if __name__ == "__main__":
                             bar = '█' * int(prob * 20)
                             print(f"        {deprel:12s} {prob:.4f} {bar}{marker}")
 
-                # Сокращённый вывод для остальных токенов
-                if len(first_sent) > 3:
-                    print(f"\n  ... и ещё {len(first_sent) - 3} токен(ов) с probas")
-
             # Статистика
             print(f"\n{'─'*70}")
             print(f"📈 Confidence Statistics:")
@@ -255,14 +251,14 @@ if __name__ == "__main__":
         # Одиночные форматы
         # ====================================================================
         elif args.output_format == 'conllu':
-            result = parser.parse_text(test_text, output_format='conllu', use_cache=args.use_cache)
+            result = parser.parse_text(test_text, output_format='conllu')
             print(f"\n{'─'*70}")
             print(f"📄 CoNLL-U Output ({args.tokenizer})")
             print(f"{'─'*70}\n")
             print(result)
 
         elif args.output_format == 'full':
-            result_full = parser.parse_text(test_text, output_format='full', use_cache=args.use_cache)
+            result_full = parser.parse_text(test_text, output_format='full')
 
             print(f"\n{'─'*70}")
             print(f"📊 FULL Output with probas")
@@ -319,7 +315,7 @@ if __name__ == "__main__":
                             print(f"        {deprel:12s} {prob:.4f} {bar}{marker}")
 
         else:  # 'dict'
-            result = parser.parse_text(test_text, output_format='dict', use_cache=args.use_cache)
+            result = parser.parse_text(test_text, output_format='dict')
             sentences = result
             print(f"\nReceived {len(sentences)} sentence(s)")
 
@@ -330,7 +326,7 @@ if __name__ == "__main__":
             print(f"📄 DeepPavlov Joint Parsing ({args.tokenizer})")
             print(f"{'─'*70}")
             if not df.empty:
-                cols = ['id', 'form', 'lemma', 'upos', 'head', 'deprel']
+                cols = ["id", "form", "lemma", "upos", "xpos", "feats", "head", "deprel", "deps", "misc"]
                 available_cols = [col for col in cols if col in df.columns]
                 print(df[available_cols].to_string(index=False))
 

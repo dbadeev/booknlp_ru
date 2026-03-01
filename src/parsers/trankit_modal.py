@@ -1,6 +1,7 @@
 import modal
 import logging
 import os
+from typing import Any
 
 # Локальный путь для модели
 LOCAL_MODEL_PATH = "/root/local_models/xlm-roberta-large"
@@ -40,6 +41,8 @@ app = modal.App("booknlp-ru-trankit")
 @app.cls(image=image, gpu="T4", timeout=600)
 class TrankitService:
     """Trankit dependency parsing на Modal с поддержкой CUDA."""
+    logger: logging.Logger   # ← подавляет warning :48
+    nlp: Any                 # ← подавляет warning :79
 
     @modal.enter()
     def setup(self):
@@ -66,7 +69,7 @@ class TrankitService:
                 cache_dir=LOCAL_MODEL_PATH
             )
             self.logger.info("Trankit loaded successfully from local files!")
-        except Exception as e:
+        except Exception as e:# noqa: BLE001  # intentionally broad: model init may raise various errors
             self.logger.error(f"Failed to initialize Trankit: {e}")
             try:
                 import glob
@@ -74,7 +77,7 @@ class TrankitService:
                 self.logger.info(f"Files in {LOCAL_MODEL_PATH}: {files}")
                 lang_files = glob.glob(f"{LOCAL_MODEL_PATH}/{LANG}/**")
                 self.logger.info(f"Files in {LOCAL_MODEL_PATH}/{LANG}: {lang_files}")
-            except:
+            except Exception:# noqa: BLE001
                 pass
             self.nlp = None
 
@@ -140,7 +143,7 @@ class TrankitService:
         - dspan: глобальное смещение в документе (tuple)
         - ner: теги именованных сущностей (B-PER, O и т.д.)
         - expanded: расшифровка мультитокенов (MWT) - список словарей
-        - lang: язык предложения (для многоязычных пайплайнов)  # ← ДОБАВЛЕНО!
+        - lang: язык предложения (для многоязычных пайплайнов) # ← ДОБАВЛЕНО!
 
         Аргументы:
             doc (dict): Нативный вывод от trankit.Pipeline()
@@ -195,7 +198,8 @@ class TrankitService:
     # ============================================================
     # БЛОК: Упрощенный формат (текущая логика без изменений)
     # ============================================================
-    def _process_simplified(self, doc: dict):
+    @staticmethod
+    def _process_simplified(doc: dict):
         """
         Подготавливает упрощенный выход (текущий формат).
 
@@ -289,46 +293,62 @@ class TrankitService:
 
 @app.local_entrypoint()
 def main():
-    test_texts = [
-        "Trankit работает.",
-        "Проверка на GPU."
-    ]
+    import json
+    logging.basicConfig(level=logging.INFO)
 
-    print("Testing Trankit service...")
-    service = TrankitService()
+    test_text = "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
+    sep = "=" * 70
+    service = TrankitService()# type: ignore[call-arg]
 
-    # ============================================================
-    # Демонстрация работы в упрощенном формате (по умолчанию)
-    # ============================================================
-    print("\n" + "=" * 60)
-    print("УПРОЩЕННЫЙ ФОРМАТ (simplified):")
-    print("=" * 60)
-    results = service.parse_batch.remote(test_texts, output_format="simplified")
+    # ══════════════════════════════════════════
+    # 1. Simplified (CoNLL-U поля)
+    # ══════════════════════════════════════════
+    print(f"\n{sep}\nРЕЖИМ: simplified → List[List[Dict]]\n{sep}")
+    result = service.parse.remote(test_text, output_format="simplified")
+    print(f"Предложений: {len(result)}\n")
+    for s_idx, sent in enumerate(result, 1):
+        print(f"  Предложение {s_idx}:")
+        print(f"  {'ID':<4} {'FORM':<14} {'LEMMA':<14} {'UPOS':<7} "
+              f"{'HEAD':<5} {'DEPREL':<12} START END")
+        print("  " + "-" * 100)
+        for t in sent:
+            print(f"  {t['id']:<4} {t['form']:<14} {t['lemma']:<14} {t['upos']:<7} "
+                  f"{t['head']:<5} {t['deprel']:<12} {t['start_char']} {t['end_char']}")
+            if t['feats'] != '_':
+                print(f"       feats: {t['feats']}")
 
-    for i, doc in enumerate(results):
-        print(f"\nDocument {i + 1}:")
-        for sent_idx, sent in enumerate(doc):
-            print(f"  Sentence {sent_idx + 1}: {len(sent)} tokens")
-            for tok in sent[:3]:
-                print(f"    {tok['form']} -> {tok['lemma']} ({tok['upos']}) "
-                      f"[xpos={tok['xpos']}, feats={tok['feats']}]")
+    print(f"\nКлючи simplified-токена: {list(result[0][0].keys())}")
+    print("\nJSON первого токена:")
+    print(json.dumps(result[0][0], ensure_ascii=False, indent=2))
 
-    # ============================================================
-    # Демонстрация работы в нативном формате
-    # ============================================================
-    print("\n" + "=" * 60)
-    print("НАТИВНЫЙ ФОРМАТ (native):")
-    print("=" * 60)
-    results_native = service.parse_batch.remote(test_texts[:1], output_format="native")
+    # ══════════════════════════════════════════
+    # 2. Native
+    # ══════════════════════════════════════════
+    print(f"\n{sep}\nРЕЖИМ: native → List[List[Dict]]\n{sep}")
+    result_native = service.parse.remote(test_text, output_format="native")
+    for s_idx, sent in enumerate(result_native, 1):
+        print(f"  Предложение {s_idx}:")
+        print(f"  {'ID':<4} {'TEXT':<14} {'LEMMA':<14} {'UPOS':<7} "
+              f"{'HEAD':<5} {'DEPREL':<12} {'NER':<8} LANG")
+        print("  " + "-" * 106)
+        for t in sent:
+            print(f"  {t['id']:<4} {t['text']:<14} {t['lemma']:<14} {t['upos']:<7} "
+                  f"{t['head']:<5} {t['deprel']:<12} {t.get('ner', 'O'):<8} {t.get('lang', '')} ")
+            if t['feats'] != '_':
+                print(f"       feats: {t['feats']}")
 
-    for i, doc in enumerate(results_native):
-        print(f"\nDocument {i + 1}:")
-        for sent_idx, sent in enumerate(doc):
-            print(f"  Sentence {sent_idx + 1}: {len(sent)} tokens")
-            for tok in sent[:3]:
-                print(f"    Token: {tok['text']}")
-                print(f"      lemma: {tok['lemma']}, upos: {tok['upos']}")
-                print(f"      span: {tok['span']}, dspan: {tok['dspan']}")
-                print(f"      ner: {tok['ner']}, expanded: {tok['expanded']}")
+    print(f"\nКлючи native-токена: {list(result_native[0][0].keys())}")
+    print("\nJSON первого токена:")
+    print(json.dumps(result_native[0][0], ensure_ascii=False, indent=2, default=str))
+
+    # ══════════════════════════════════════════
+    # 3. Сравнение ключей форматов
+    # ══════════════════════════════════════════
+    print(f"\n{sep}\nСРАВНЕНИЕ КЛЮЧЕЙ ФОРМАТОВ\n{sep}")
+    sk = set(result[0][0].keys())
+    nk = set(result_native[0][0].keys())
+    print(f"  Только в simplified: {sorted(sk - nk)}")
+    print(f"  Только в native:     {sorted(nk - sk)}")
 
     print("\nTest completed!")
+

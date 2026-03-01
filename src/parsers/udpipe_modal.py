@@ -22,7 +22,6 @@ UDPipe Modal Service для booknlp_ru.
 """
 
 import logging
-import re
 
 import modal
 
@@ -31,7 +30,7 @@ import modal
 # ─────────────────────────────────────────────────────────────
 
 image = (
-    modal.Image.debian_slim()
+    modal.Image.debian_slim(python_version="3.12")
     .apt_install("git", "curl", "build-essential", "swig", "g++")
     .pip_install("ufal.udpipe")
     .run_commands(
@@ -44,11 +43,49 @@ image = (
 app = modal.App("booknlp-ru-udpipe")
 
 
+# ─────────────────────── вспомогательные функции (уровень модуля) ───────
+
+# def _parse_token_range(misc_raw: str) -> tuple[int, int]:
+#     """
+#     Извлекает TokenRange=start:end из строки MISC.
+#     Возвращает (startchar, endchar) или (0, 0) если TokenRange отсутствует.
+#
+#     Пример: "SpaceAfter=No|TokenRange=5:9" → (5, 9)
+#     """
+#     for field in misc_raw.split("|"):
+#         if field.startswith("TokenRange="):
+#             try:
+#                 start_s, end_s = field[len("TokenRange="):].split(":")
+#                 return int(start_s), int(end_s)
+#             except ValueError:
+#                 pass
+#     return 0, 0
+
+
+# def _parse_misc_dict(misc_raw: str) -> dict:
+#     """
+#     Разбирает строку MISC CoNLL-U в словарь Python.
+#
+#     "SpaceAfter=No|TokenRange=0:4" → {"SpaceAfter": "No", "TokenRange": "0:4"}
+#     "_"                            → {}
+#     """
+#     if not misc_raw or misc_raw == "_":
+#         return {}
+#     result = {}
+#     for field in misc_raw.split("|"):
+#         if "=" in field:
+#             k, v = field.split("=", 1)
+#             result[k] = v
+#         else:
+#             result[field] = True
+#     return result
+
+
 # ─────────────────────────────────────────────────────────────
 # СЕРВИС
 # ─────────────────────────────────────────────────────────────
 
-@app.cls(image=image, timeout=600)
+@app.cls(image=image, timeout=600, scaledown_window=60)
 class UDPipeService:
 
     @modal.enter()
@@ -63,6 +100,9 @@ class UDPipeService:
         if not self.model:
             raise RuntimeError("Cannot load UDPipe model!")
 
+        # ИЗМЕНЕНИЕ: храним класс Pipeline для создания вариантов с разными опциями
+        self._Pipeline = Pipeline
+
         self.pipeline = Pipeline(
             self.model,
             "tokenize",
@@ -70,7 +110,47 @@ class UDPipeService:
             Pipeline.DEFAULT,
             "conllu",
         )
+        # ДОБАВЛЕНО: кеш пайплайнов для разных tokenizer_options.
+        # Создание Pipeline — дешёвая операция (модель уже загружена),
+        # но кешируем чтобы не пересоздавать при каждом вызове.
+        self._pipeline_cache: dict = {
+            "tokenize": self.pipeline,
+        }
+
         self.logger.info("UDPipe loaded!")
+
+    # ДОБАВЛЕНО: вспомогательный метод — выбор/создание пайплайна по опциям
+    def _get_pipeline(self, tokenizer_options: dict | None):
+        """
+        Возвращает Pipeline с нужными опциями токенизатора.
+        Опции кешируются — Pipeline для одного набора опций создаётся один раз.
+
+        Поддерживаемые tokenizer_options:
+            {"ranges": True}  →  "tokenize ranges"
+                                  UDPipe добавит TokenRange=start:end в MISC.
+        """
+        if not tokenizer_options:
+            return self.pipeline
+
+        if tokenizer_options.get("ranges"):
+            raise NotImplementedError(
+                "ranges не поддерживается ufal.udpipe Pipeline.process(). "
+                "Используйте UDPipe REST API или вычисляйте offsets вручную."
+            )
+        return self.pipeline
+
+        # parts = ["tokenize"]
+        # if tokenizer_options.get("ranges"):
+        #     parts.append("ranges")
+        #
+        # key = " ".join(parts)
+        # if key not in self._pipeline_cache:
+        #     self._pipeline_cache[key] = self._Pipeline(
+        #         self.model, key,
+        #         self._Pipeline.DEFAULT, self._Pipeline.DEFAULT, "conllu",
+        #     )
+        #     self.logger.info(f"Created pipeline: '{key}'")
+        # return self._pipeline_cache[key]
 
     # ──────────────────────────────────────────────────────────
     # Вспомогательный метод: парсинг строки MISC → dict
@@ -80,6 +160,8 @@ class UDPipeService:
     def _parse_misc(misc_str: str) -> dict:
         """
         Разбирает строку MISC в словарь.
+        dict-режим : misc остаётся raw строкой "SpaceAfter=No|TokenRange=0:4"
+        native-режим: misc разбирается в {"SpaceAfter": "No", "TokenRange": "0:4"}
 
         Примеры:
             "SpaceAfter=No|TokenRange=0:4"  →  {"SpaceAfter": "No", "TokenRange": "0:4"}
@@ -161,52 +243,91 @@ class UDPipeService:
             result.append(current_sent)
 
         return result
+    #
+    # def _format_native_output(self, sentences: list) -> list:
+    #     """
+    #     Конвертирует список предложений (list of list of dict)
+    #     в native-формат: misc становится словарём вместо raw-строки.
+    #
+    #     Все остальные поля остаются без изменений.
+    #     """
+    #     result = []
+    #     for sent in sentences:
+    #         native_sent = []
+    #         for token in sent:
+    #             native_tok = dict(token)  # копируем чтобы не мутировать оригинал
+    #             # misc уже разобран в parse_text через _parse_misc_dict —
+    #             # здесь просто гарантируем что он dict, а не строка
+    #             if isinstance(native_tok["misc"], str):
+    #                 native_tok["misc"] = _parse_misc_dict(native_tok["misc"])
+    #             native_sent.append(native_tok)
+    #         result.append(native_sent)
+    #     return result
 
     # ──────────────────────────────────────────────────────────
     # Внутренний метод: парсинг текста
     # ──────────────────────────────────────────────────────────
-
-    def parse_text(self, text: str, output_format: str = "dict") -> list:
-        """
-        Parameters
-        ----------
-        text : str
-            Входной текст.
-        output_format : str, default "dict"
-            "dict"   → List[List[Dict]], misc — raw CoNLL-U строка
-            "native" → List[List[Dict]], misc — разобранный словарь
-
-        Returns
-        -------
-        List[List[Dict]]
-        """
+    def parse_text(
+            self,
+            text: str,
+            output_format: str = "dict",
+            # ДОБАВЛЕНО: поддержка опций токенизатора.
+            # {"ranges": True} → TokenRange=start:end в MISC каждого токена
+            tokenizer_options: dict | None = None,
+    ):
         if not text or not text.strip():
-            return []
+            return [] if output_format == "dict" else ""
+
+        pipeline = self._get_pipeline(tokenizer_options)  # ИЗМЕНЕНО
+        processed = pipeline.process(text)  # ИЗМЕНЕНО
+        # ДОБАВИТЬ: UDPipe не бросает исключение — пишет ошибку в строку
+        if not processed:
+            self.logger.error("UDPipe вернул пустую строку")
+            msg = (
+                "UDPipe вернул пустую строку "
+                f"(tokenizer_options={tokenizer_options!r})"
+            )
+            self.logger.error(msg)
+            raise RuntimeError(msg)
+
+        if "error" in processed.lower():
+            self.logger.error(f"UDPipe error: {processed[:300]!r}")
+            raise RuntimeError(f"UDPipe pipeline error: {processed[:300]}")
+
+        # # ДОБАВИТЬ: логировать первые строки вывода при ranges
+        if tokenizer_options:
+            self.logger.info(f"Pipeline output (first 300): {processed[:300]!r}")
+
 
         try:
-            processed = self.pipeline.process(text)
-
-            if not processed or not processed.strip():
-                self.logger.error("UDPipe returned empty output.")
-                return []
-
-            parse_misc = (output_format == "native")
-            return self._conllu_to_dict(processed, parse_misc=parse_misc)
+            return self._conllu_to_dict(
+                processed,
+                parse_misc=(output_format == "native"),
+            )
 
         except Exception as e:
             self.logger.error(f"Parse error: {e}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            return []
+            # return []
+            raise
 
     # ──────────────────────────────────────────────────────────
     # Публичные Modal-методы
     # ──────────────────────────────────────────────────────────
 
+    # ─────────────────────── @modal.method() parse() ────────────────────────
     @modal.method()
-    def parse(self, text: str, output_format: str = "dict") -> list:
-        """Парсинг одного текста. output_format: 'dict' или 'native'."""
-        return self.parse_text(text, output_format=output_format)
+    def parse(
+            self,
+            text: str,
+            output_format: str = "dict",
+            # ДОБАВЛЕНО: пробрасываем tokenizer_options из wrapper в parse_text
+            tokenizer_options: dict | None = None,
+    ):
+        return self.parse_text(
+            text,
+            output_format=output_format,
+            tokenizer_options=tokenizer_options,
+        )
 
     @modal.method()
     def parse_batch(self, texts: list, output_format: str = "dict") -> list:
@@ -297,3 +418,32 @@ def main():
                 print(f"    [{t_d['form']}]")
                 print(f"      dict:   {repr(t_d['misc'])}")
                 print(f"      native: {repr(t_n['misc'])}")
+
+    # ════════════════════════════════════════════
+    # 4. Ranges — диагностика TokenRange в MISC
+    # ════════════════════════════════════════════
+    print(f"\n{SEP}\nРЕЖИМ: ranges  →  tokenizer_options={{'ranges': True}}\n{SEP}")
+    try:
+        result_ranges = service.parse.remote(
+            TEST_TEXT,
+            output_format="native",
+            tokenizer_options={"ranges": True},
+        )
+        if not result_ranges:
+            print("⚠ Результат пустой.")
+        else:
+            print(f"Предложений: {len(result_ranges)}\n")
+            tok0 = result_ranges[0][0]
+            print(f"  misc первого токена: {tok0['misc']}")
+            has_ranges = any(
+                isinstance(t["misc"], dict) and "TokenRange" in t["misc"]
+                for sent in result_ranges
+                for t in sent
+            )
+            print(f"  TokenRange присутствует: {'✅ да' if has_ranges else '❌ нет'}")
+    except NotImplementedError as e:
+        print(f"  ⚠️ NotImplementedError (ожидаемо): {e}")
+    except RuntimeError as e:
+        print(f"  ❌ RuntimeError: {e}")
+    except Exception as e:
+        print(f"  ❌ Неожиданная ошибка: {e}")

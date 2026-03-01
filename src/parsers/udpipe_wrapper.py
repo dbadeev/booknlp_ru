@@ -31,25 +31,60 @@ class UDPipeParser:
     """
 
     def __init__(self):
-        self._service = modal.Cls.from_name(APP_NAME, "UDPipeService")()
-        logger.info(f"UDPipeParser подключён к Modal-приложению '{APP_NAME}'.")
+        try:
+            self._service = modal.Cls.from_name(APP_NAME, "UDPipeService")()
+            logger.info(f"UDPipeParser подключён к Modal-приложению '{APP_NAME}'.")
+        except Exception as e:
+            logger.error(f"❌ Не удалось подключиться к Modal: {e}")
+            raise
 
     def parse_text(
-        self,
-        text: str,
-        output_format: str = "dict",
+            self,
+            text: str,
+            output_format: str = "dict",
+            # ДОБАВЛЕНО: поддержка дополнительных опций токенизатора UDPipe.
+            # Например: {"ranges": True} → TokenRange=start:end в каждом токене MISC.
+            # Требует поддержки параметра tokenizer_options в UDPipeService.parse().
+            tokenizer_options: dict | None = None,
     ) -> List[List[Dict[str, Any]]]:
-        """
-        Parameters
-        ----------
-        text : str
-            Входной текст.
-        output_format : str, default "dict"
-            "dict"   → List[List[Dict]], misc — raw CoNLL-U строка
-            "native" → List[List[Dict]], misc — разобранный словарь
-        """
-        return self._service.parse.remote(text, output_format=output_format)
+        try:
+            kwargs = dict(output_format=output_format)
+            if tokenizer_options is not None:
+                kwargs["tokenizer_options"] = tokenizer_options
+            result = self._service.parse.remote(text, **kwargs)
+            return result or []
+        except NotImplementedError:
+            raise  # просто пробрасываем — тест в __main__ сам напечатает предупреждение
+        except Exception as e:
+            logger.error(f"❌ Ошибка при разборе: {e}")
+            raise
 
+    def parse_batch(
+            self,
+            texts: List[str],
+            output_format: str = "dict",
+            batch_size: int = 32,
+    ) -> List[List[List[Dict[str, Any]]]]:
+        """
+        Пакетная обработка списка текстов.
+
+        Returns
+        -------
+        List[List[List[Dict]]]
+            Для каждого текста — список предложений.
+        """
+        try:
+            results = []
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i: i + batch_size]
+                batch_result = self._service.parse_batch.remote(
+                    batch, output_format=output_format
+                )
+                results.extend(batch_result or [])
+            return results
+        except Exception as e:
+            logger.error(f"❌ Ошибка пакетной обработки: {e}")
+            raise
 
 # ─────────────────────────────────────────────────────────────
 # Вспомогательные функции вывода
@@ -96,8 +131,19 @@ def _print_misc_spotlight(sent: list, misc_is_dict: bool) -> None:
         print("    (нет токенов с заполненным MISC)")
         return
     for t in tokens:
-        misc_repr = repr(t["misc"]) if misc_is_dict else repr(t["misc"])
-        print(f"    [{str(t['id']):>2}] {t['form']:<16}  {misc_repr}")
+        # misc_repr = repr(t["misc"]) if misc_is_dict else repr(t["misc"])
+        # СТАЛО — для строк раскрываем CoNLL-U эскейпы:
+        if misc_is_dict:
+            # repr() на dict корректен, но значения внутри нужно раскрыть
+            # для читаемого отображения:
+            readable = {
+                k: v.replace("\\n", "↵").replace("\\t", "→") if isinstance(v, str) else v
+                for k, v in t["misc"].items()
+            }
+            misc_repr = repr(readable)
+        else:
+            misc_repr = repr(t["misc"])
+        print(f"  [{str(t['id']):>2}] {t['form']:<16} {misc_repr}")
 
 
 # ─────────────────────────────────────────────────────────────
@@ -223,9 +269,13 @@ if __name__ == "__main__":
                         )
         print(f"\n  Уникальные MISC-ключи (native-формат):")
         if all_keys:
-            for k in sorted(all_keys):
-                vals = sorted(str(v) for v in all_keys[k])
-                print(f"    {k:20s} → {', '.join(vals)}")
+            for k in sorted(all_keys.keys()):
+                vals = sorted(
+                    v.replace("\\n", "↵").replace("\\t", "→")
+                    if isinstance(v, str) else str(v)
+                    for v in all_keys[k]
+                )
+                print(f"  {k:<20} → {', '.join(vals)}")
         else:
             print("    (ни одного — модель вернула только SpaceAfter или пусто)")
 
@@ -235,6 +285,103 @@ if __name__ == "__main__":
         print(f"  {SEP2}")
         for td, tn in zip(result_dict[0], result_native[0]):
             if td["misc"] != "_" or tn["misc"]:
+                # dict — repr raw строки; native — ↵ для читаемости
+                if isinstance(tn["misc"], dict):
+                    tn_display = repr({
+                        k: v.replace("\\n", "↵").replace("\\t", "→")
+                        if isinstance(v, str) else v
+                        for k, v in tn["misc"].items()
+                    })
+                else:
+                    tn_display = repr(tn["misc"])
                 print(f"  {td['form']:<16} "
                       f"{repr(td['misc']):<35} "
-                      f"{repr(tn['misc'])}")
+                      f"{tn_display}")
+
+        # ════════════════════════════════════════════════════════
+        # 4. parse_batch — пакетная обработка нескольких текстов
+        # ════════════════════════════════════════════════════════
+        print(f"\n{SEP}")
+        print("РЕЖИМ: parse_batch (несколько текстов за один вызов)")
+        print(SEP)
+
+        TEST_BATCH = [
+            "Он думал о море.",
+            "Кот лежал на диване.",
+            TEXT_SPACES,  # сложный текст с пунктуацией и переносами
+        ]
+
+        result_batch = parser.parse_batch(TEST_BATCH, output_format="native")
+        print(f"Текстов подано   : {len(TEST_BATCH)}")
+        print(f"Результатов получено: {len(result_batch)}\n")
+
+        for t_idx, text_sents in enumerate(result_batch):
+            total_tok = sum(len(s) for s in text_sents)
+            preview = TEST_BATCH[t_idx][:40].replace("\n", "↵")
+            print(f"  [{t_idx}] '{preview}'"
+                  f" → {len(text_sents)} предл., {total_tok} токенов")
+
+        # Проверяем что структура совпадает с parse_text
+        single_result = parser.parse_text(TEST_BATCH[0], output_format="native")
+        batch_first   = result_batch[0]
+        match = (
+            len(single_result) == len(batch_first)
+            and all(
+                s["form"] == b["form"]
+                for ss, bs in zip(single_result, batch_first)
+                for s, b in zip(ss, bs)
+            )
+        )
+        print(f"\n  Совпадение parse_text vs parse_batch[0]: "
+              f"{'✅ да' if match else '❌ расхождение!'}")
+
+        # ════════════════════════════════════════════════════════
+        # 5. TEXT_RANGES — опция tokenizer ranges → TokenRange в MISC
+        # ════════════════════════════════════════════════════════
+        print(f"\n{SEP}")
+        print("РЕЖИМ: ranges (tokenizer_options={'ranges': True})")
+        print("Ожидается: TokenRange=start:end в поле MISC каждого токена")
+        print(SEP)
+
+        try:
+            result_ranges = parser.parse_text(
+                TEXT_RANGES,
+                output_format="native",
+                tokenizer_options={"ranges": True},
+            )
+            print(f"Предложений: {len(result_ranges)}\n")
+
+            for s_idx, sent in enumerate(result_ranges, 1):
+                print(f"  Предложение {s_idx} ({len(sent)} токенов):")
+                print(f"  {'ID':<4} {'FORM':<16} {'TokenRange':<18} прочие MISC-ключи")
+                print("  " + "-" * 60)
+                has_ranges = False
+                for tok in sent:
+                    misc = tok.get("misc") or {}
+                    # misc может быть dict (native) или str (dict-формат)
+                    if isinstance(misc, dict):
+                        token_range = misc.get("TokenRange", "—")
+                        other = {k: v for k, v in misc.items() if k != "TokenRange"}
+                        has_ranges = has_ranges or token_range != "—"
+                    else:
+                        token_range = "—"
+                        other = misc
+                    print(f"  {tok['id']:<4} {tok['form']:<16} {str(token_range):<18} {other}")
+                print()
+
+                if not has_ranges:
+                    print("  ⚠️  TokenRange отсутствует — сервис может не поддерживать"
+                          " tokenizer_options.\n"
+                          "     Проверьте: UDPipeService.parse() принимает tokenizer_options?")
+
+        except TypeError as e:
+            # Modal выбросит TypeError если parse() не принимает tokenizer_options
+            print(f"  ⚠️  Сервис не поддерживает tokenizer_options: {e}")
+            print(f"  Добавьте параметр в UDPipeService.parse() в udpipe_modal.py:")
+            print(f"      def parse(self, text, output_format='dict', tokenizer_options=None)")
+        except NotImplementedError as e:
+            print(f"  ⚠️  Функция не поддерживается: {e}")
+        except Exception as e:
+            print(f"  ❌ Ошибка: {e}")
+
+        print(f"\n{SEP}\n✅ Все тесты завершены\n{SEP}")

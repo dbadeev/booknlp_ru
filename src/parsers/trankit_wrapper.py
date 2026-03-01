@@ -72,10 +72,20 @@ if __name__ == "__main__":
     result = parser.parse_text(test_text, output_format="simplified")
 
     print("Trankit Test:")
-    for sent in result:
+    print(f"{'ID':<4} {'FORM':<14} {'LEMMA':<14} {'UPOS':<7} {'XPOS':<5} "
+          f"{'HEAD':<5} {'DEPREL':<12} START END")
+    print("-" * 80)
+    for s_idx, sent in enumerate(result, 1):
+        if s_idx > 1:
+            print()  # пустая строка между предложениями
         for tok in sent:
-            print(f"{tok.get('id')}\t{tok.get('form')}\t{tok.get('lemma')}\t{tok.get('upos')}\t{tok.get('head')}\t{tok.get('deprel')}")
-
+            print(f"{tok.get('id'):<4} {tok.get('form'):<14} {tok.get('lemma'):<14} "
+                  f"{tok.get('upos'):<7} {tok.get('xpos', '_'):<5} "
+                  f"{tok.get('head'):<5} {tok.get('deprel'):<12} "
+                  f"{tok.get('start_char')} {tok.get('end_char')}")
+            feats = tok.get('feats', '_')
+            if feats and feats != '_':
+                print(f"     feats: {feats}")
     # ============================================================
     # Демонстрация работы в нативном формате
     # ============================================================
@@ -86,7 +96,7 @@ if __name__ == "__main__":
 
     print("Trankit Test (Native):")
     for sent in result_native:
-        for tok in sent[:25]:  # Показываем первые 5 токенов
+        for tok in sent:  # Показываем все токены
             print(f"\nText: {tok.get('text')}")
             print(f"  id: {tok.get('id')}")
             print(f"  lemma: {tok.get('lemma')}, upos: {tok.get('upos')}, xpos: {tok.get('xpos')}")

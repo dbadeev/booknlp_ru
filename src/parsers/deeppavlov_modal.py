@@ -1,9 +1,5 @@
 import modal
-from typing import List, Dict, Any, Union, Optional
-import json
-
-cache_volume = modal.Volume.from_name("deeppavlov-cache", create_if_missing=True)
-results_cache_volume = modal.Volume.from_name("deeppavlov-results-cache", create_if_missing=True)
+from typing import List, Dict, Any, Union
 
 dp_image = (
     modal.Image.debian_slim()
@@ -30,45 +26,54 @@ dp_image = (
 app = modal.App("booknlp-ru-deeppavlov")
 
 @app.cls(
-    image=dp_image, 
-    gpu="T4", 
+    image=dp_image,
+    gpu="T4",
     timeout=1200,
-    volumes={
-        "/cache": cache_volume,
-        "/results_cache": results_cache_volume
-    }
+    max_containers=2
 )
 class DeepPavlovService:
+
+    # ← Аннотации на уровне класса вместо __init__
+    # PyCharm видит их как объявления атрибутов экземпляра
+    model: Any
+    morpho_tagger_component: Any
+    syntax_parser_component: Any
+    deprel_vocab: List[str]
+    hook_handles: List
+    _last_upos_logits: Any
+    _last_heads_logits: Any
+    _last_deps_logits: Any
+
     @modal.enter()
     def enter(self):
         from deeppavlov import build_model, configs
-        import hashlib
-        import torch
-        import torch.nn.functional as F
         from pathlib import Path
 
+        # Теперь self.model и остальные — без предупреждений PyCharm
         self.model = build_model(
             configs.morpho_syntax_parser.ru_syntagrus_joint_parsing,
             download=True
         )
+        self.morpho_tagger_component = None
+        self.syntax_parser_component = None
+        self._last_upos_logits = None
+        self._last_heads_logits = None
+        self._last_deps_logits = None
 
         print("\n🔧 Extracting components...")
 
-        main = self.model.get_main_component()
+        main_component = self.model.get_main_component()
 
-        self.morpho_tagger_component = None
-        self.syntax_parser_component = None
-
-        if hasattr(main, 'tagger') and hasattr(main.tagger, 'pipe'):
-            for i, item in enumerate(main.tagger.pipe):
+        if hasattr(main_component, 'tagger') and hasattr(main_component.tagger, 'pipe'):
+            for i, item in enumerate(main_component.tagger.pipe):
                 comp = item[2] if isinstance(item, (tuple, list)) and len(item) > 2 else item
                 if 'Sequence' in comp.__class__.__name__ and 'Tagger' in comp.__class__.__name__:
                     self.morpho_tagger_component = comp
                     print(f"  ✓ Tagger")
                     break
 
-        if hasattr(main, 'parser') and hasattr(main.parser, 'pipe'):
-            for i, item in enumerate(main.parser.pipe):
+        if hasattr(main_component, 'parser') and hasattr(main_component.parser, 'pipe'):
+            for i, item in enumerate(main_component.parser.pipe):
                 comp = item[2] if isinstance(item, (tuple, list)) and len(item) > 2 else item
                 if 'Syntax' in comp.__class__.__name__ and 'Parser' in comp.__class__.__name__:
                     self.syntax_parser_component = comp
@@ -95,7 +100,7 @@ class DeepPavlovService:
                                     self.deprel_vocab = [line.split('\t')[0].strip() for line in lines if line.strip()]
                                     print(f"  ✓ Loaded {len(self.deprel_vocab)} deprels")
                                     break
-                        except:
+                        except (AttributeError, RuntimeError, TypeError):
                             pass
                 if self.deprel_vocab:
                     break
@@ -120,7 +125,7 @@ class DeepPavlovService:
 
         # UPOS
         if self.morpho_tagger_component and hasattr(self.morpho_tagger_component, 'model'):
-            def morpho_hook(module, input, output):
+            def morpho_hook(_module, _input, output):
                 try:
                     if hasattr(output, 'logits'):
                         logits = output.logits
@@ -129,7 +134,7 @@ class DeepPavlovService:
                     else:
                         logits = output
                     service.morpho_tagger_component._last_upos_logits = logits.detach().cpu()
-                except:
+                except (AttributeError, RuntimeError, TypeError):
                     pass
 
             handle = self.morpho_tagger_component.model.register_forward_hook(morpho_hook)
@@ -141,25 +146,25 @@ class DeepPavlovService:
             parser_model = self.syntax_parser_component.model
 
             if hasattr(parser_model, 'biaf_head'):
-                def biaf_head_hook(module, input, output):
+                def biaf_head_hook(_module, _input, output):
                     try:
                         if hasattr(output, 'shape'):
                             if len(output.shape) == 4 and output.shape[-1] == 1:
                                 output = output.squeeze(-1)
                             service.syntax_parser_component._last_heads_logits = output.detach().cpu()
-                    except:
-                        pass
+                    except (AttributeError, RuntimeError, TypeError):
+                       pass
 
                 handle = parser_model.biaf_head.register_forward_hook(biaf_head_hook)
                 self.hook_handles.append(handle)
                 print("  ✓ heads hook")
 
             if hasattr(parser_model, 'biaf_dep'):
-                def biaf_dep_hook(module, input, output):
+                def biaf_dep_hook(_module, _input, output):
                     try:
                         if hasattr(output, 'shape'):
                             service.syntax_parser_component._last_deps_logits = output.detach().cpu()
-                    except:
+                    except (AttributeError, RuntimeError, TypeError):
                         pass
 
                 handle = parser_model.biaf_dep.register_forward_hook(biaf_dep_hook)
@@ -168,9 +173,8 @@ class DeepPavlovService:
 
         print("\n✅ Ready\n")
 
-        self.cache_enabled = True
-
-    def _format_native_output(self, sentences: List[List[Dict]]) -> str:
+    @staticmethod
+    def _format_connlu_output(sentences: List[List[Dict]]) -> str:
         conllu_blocks = []
         for sent in sentences:
             lines = []
@@ -191,7 +195,37 @@ class DeepPavlovService:
                 ])
                 lines.append(line)
             conllu_blocks.append('\n'.join(lines))
-        return '\n\n'.join(conllu_blocks)
+        return '\n\n'.join(conllu_blocks) + '\n'
+
+    @staticmethod
+    def _parse_batch_to_dicts(parsed_batch, token_spans) -> List[List[Dict]]:
+        """Разбирает сырой CoNLL-U вывод модели в List[List[Dict]]."""
+        results = []
+        for i, sent_conllu in enumerate(parsed_batch):
+            sent_res = []
+            lines = [line for line in sent_conllu.split("\n") if line and not line.startswith("#")]
+            for j, line in enumerate(lines):
+                fields = line.split("\t")
+                if "-" in fields[0]:
+                    continue
+                start_c, end_c = token_spans[i][j] if j < len(token_spans[i]) else (0, 0)
+                sent_res.append({
+                    "id": int(fields[0]),
+                    "form": fields[1],
+                    "lemma": fields[2],
+                    "upos": fields[3],
+                    "xpos": fields[4],
+                    "feats": fields[5],
+                    "head": int(fields[6]),
+                    "deprel": fields[7],
+                    "deps": fields[8],
+                    "misc": fields[9],
+                    "startchar": start_c,
+                    "endchar": end_c,
+                })
+            results.append(sent_res)
+        return results
+
 
     def _get_deprel_vocab(self) -> List[str]:
         return self.deprel_vocab if self.deprel_vocab else []
@@ -201,10 +235,7 @@ class DeepPavlovService:
         tokenized_sentences: List[List[str]],
         sentences_dict: List[List[Dict]]
     ) -> tuple:
-        import numpy as np
         import torch.nn.functional as F
-
-        _ = self.model(tokenized_sentences)
 
         upos_probas_all = []
         heads_probas_all = []
@@ -228,7 +259,7 @@ class DeepPavlovService:
                         ])
                     else:
                         upos_probas_all.append([0.95] * sent_len)
-                except:
+                except Exception:
                     upos_probas_all.append([0.95] * sent_len)
             else:
                 upos_probas_all.append([0.95] * sent_len)
@@ -249,7 +280,7 @@ class DeepPavlovService:
                         heads_probas_all.append(
                             [[1.0/(sent_len+1)] * (sent_len+1) for _ in range(sent_len)]
                         )
-                except:
+                except Exception:
                     heads_probas_all.append(
                         [[1.0/(sent_len+1)] * (sent_len+1) for _ in range(sent_len)]
                     )
@@ -287,7 +318,7 @@ class DeepPavlovService:
                         deps_probas_all.append(deps_list)
                     else:
                         deps_probas_all.append([{'root': 0.95} for _ in range(sent_len)])
-                except:
+                except Exception:
                     deps_probas_all.append([{'root': 0.95} for _ in range(sent_len)])
             else:
                 deps_probas_all.append([{'root': 0.95} for _ in range(sent_len)])
@@ -302,37 +333,7 @@ class DeepPavlovService:
 
         parsed_batch = self.model(tokenized_sentences)
 
-        sentences_dict = []
-        for i, sent_conllu in enumerate(parsed_batch):
-            sent_res = []
-            lines = [l for l in sent_conllu.split('\n') if l and not l.startswith('#')]
-
-            for j, line in enumerate(lines):
-                fields = line.split('\t')
-                if '-' in fields[0]:
-                    continue
-
-                start_c, end_c = token_spans[i][j] if j < len(token_spans[i]) else (0, 0)
-
-                token_data = {
-                    'id': int(fields[0]),
-                    'form': fields[1],
-                    'lemma': fields[2],
-                    'upos': fields[3],
-                    'xpos': fields[4],
-                    'feats': fields[5],
-                    'head': int(fields[6]),
-                    'deprel': fields[7],
-                    'deps': fields[8],
-                    'misc': fields[9],
-                    'startchar': start_c,
-                    'endchar': end_c
-                }
-
-                sent_res.append(token_data)
-
-            sentences_dict.append(sent_res)
-
+        sentences_dict = self._parse_batch_to_dicts(parsed_batch, token_spans)
         upos_probas, heads_probas, deps_probas = self._extract_real_probas(
             tokenized_sentences, sentences_dict
         )
@@ -356,7 +357,7 @@ class DeepPavlovService:
 
         result = {
             'format': 'full',
-            'conllu': self._format_native_output(sentences_dict),
+            'conllu': self._format_connlu_output(sentences_dict),
             'sentences': sentences_dict,
             'metadata': {
                 'model': 'ru_syntagrus_joint_parsing',
@@ -368,50 +369,17 @@ class DeepPavlovService:
 
         return result
 
-    def _get_cache_key(self, text: str, output_format: str) -> str:
-        import hashlib
-        content = f"{text}_{output_format}"
-        return hashlib.sha256(content.encode()).hexdigest()
-
-    def _load_from_cache(self, cache_key: str) -> Optional[Any]:
-        if not self.cache_enabled:
-            return None
-        try:
-            cache_path = f"/results_cache/{cache_key}.json"
-            with open(cache_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except:
-            return None
-
-    def _save_to_cache(self, cache_key: str, result: Any):
-        if not self.cache_enabled:
-            return
-        try:
-            cache_path = f"/results_cache/{cache_key}.json"
-            with open(cache_path, 'w', encoding='utf-8') as f:
-                json.dump(result, f, ensure_ascii=False)
-            results_cache_volume.commit()
-        except:
-            pass
-
     @modal.method()
     def parse_text(
-        self, 
-        text: str, 
-        output_format: str = 'conllu',
-        use_cache: bool = False
-    ) -> Union[List, str, Dict]:
+            self,
+            text: str,
+            output_format: str = "dict",
+    ) -> Union[List[List[Dict[str, Any]]], str, Dict[str, Any]]:
         from razdel import tokenize, sentenize
 
-        if use_cache:
-            cache_key = self._get_cache_key(text, output_format)
-            cached_result = self._load_from_cache(cache_key)
-            if cached_result is not None:
-                return cached_result
-
         sentences = list(sentenize(text))
-        tokenized_sentences = []
-        token_spans = []
+        tokenized_sentences: List[List[str]] = []
+        token_spans: List[List[tuple]] = []
 
         for sent in sentences:
             tokens = list(tokenize(sent.text))
@@ -421,137 +389,145 @@ class DeepPavlovService:
                 for t in tokens
             ])
 
-        if output_format == 'full':
-            result = self._parse_with_probas(tokenized_sentences, token_spans)
+        if output_format == "full":
+            return self._parse_with_probas(tokenized_sentences, token_spans)
 
-        elif output_format == 'conllu':
-            parsed_batch = self.model(tokenized_sentences)
-            results = []
-            for i, sent_conllu in enumerate(parsed_batch):
-                sent_res = []
-                lines = [l for l in sent_conllu.split('\n') if l and not l.startswith('#')]
+        parsed_batch = self.model(tokenized_sentences)
+        results = self._parse_batch_to_dicts(parsed_batch, token_spans)
 
-                for j, line in enumerate(lines):
-                    fields = line.split('\t')
-                    if '-' in fields[0]:
-                        continue
+        if output_format == "conllu":
+            return self._format_connlu_output(results)
 
-                    start_c, end_c = token_spans[i][j] if j < len(token_spans[i]) else (0, 0)
-
-                    sent_res.append({
-                        'id': int(fields[0]),
-                        'form': fields[1],
-                        'lemma': fields[2],
-                        'upos': fields[3],
-                        'xpos': fields[4],
-                        'feats': fields[5],
-                        'head': int(fields[6]),
-                        'deprel': fields[7],
-                        'deps': fields[8],
-                        'misc': fields[9],
-                        'startchar': start_c,
-                        'endchar': end_c
-                    })
-
-                results.append(sent_res)
-
-            result = self._format_native_output(results)
-
-        else:  # 'dict'
-            parsed_batch = self.model(tokenized_sentences)
-            results = []
-            for i, sent_conllu in enumerate(parsed_batch):
-                sent_res = []
-                lines = [l for l in sent_conllu.split('\n') if l and not l.startswith('#')]
-
-                for j, line in enumerate(lines):
-                    fields = line.split('\t')
-                    if '-' in fields[0]:
-                        continue
-
-                    start_c, end_c = token_spans[i][j] if j < len(token_spans[i]) else (0, 0)
-
-                    sent_res.append({
-                        'id': int(fields[0]),
-                        'form': fields[1],
-                        'lemma': fields[2],
-                        'upos': fields[3],
-                        'xpos': fields[4],
-                        'feats': fields[5],
-                        'head': int(fields[6]),
-                        'deprel': fields[7],
-                        'deps': fields[8],
-                        'misc': fields[9],
-                        'startchar': start_c,
-                        'endchar': end_c
-                    })
-
-                results.append(sent_res)
-
-            result = results
-
-        if use_cache:
-            self._save_to_cache(cache_key, result)
-
-        return result
+        return results  # "dict" → List[List[Dict]]
 
     @modal.method()
     def parse_batch(
-        self, 
-        texts: List[str], 
-        output_format: str = 'conllu',
-        use_cache: bool = False
-    ) -> Union[List, List[str], List[Dict]]:
-        return [
-            self.parse_text(t, output_format=output_format, use_cache=use_cache) 
-            for t in texts
-        ]
+            self,
+            texts: List[str],
+            output_format: str = "dict",
+            sentence_batch_size: int = 32,
+    ) -> Union[List[List[Dict]], List[str]]:
+        from razdel import tokenize, sentenize
+
+        # Шаг 1: токенизируем все тексты, собираем предложения в плоский список
+        all_tokenized: List[List[str]] = []
+        all_spans: List[List[tuple]] = []
+        text_sent_counts: List[int] = []
+
+        for text in texts:
+            sents = list(sentenize(text))
+            count = 0
+            for sent in sents:
+                tokens = list(tokenize(sent.text))
+                all_tokenized.append([t.text for t in tokens])
+                all_spans.append([
+                    (sent.start + t.start, sent.start + t.stop)
+                    for t in tokens
+                ])
+                count += 1
+            text_sent_counts.append(count)
+
+        # Шаг 2: обрабатываем предложения чанками
+        all_dicts: List[List[Dict]] = []
+
+        for chunk_start in range(0, len(all_tokenized), sentence_batch_size):
+            chunk_end = chunk_start + sentence_batch_size
+            tokenized_chunk = all_tokenized[chunk_start:chunk_end]
+            spans_chunk = all_spans[chunk_start:chunk_end]
+
+            parsed_chunk = self.model(tokenized_chunk)
+            dicts_chunk = self._parse_batch_to_dicts(parsed_chunk, spans_chunk)
+            all_dicts.extend(dicts_chunk)
+
+        # Шаг 3: собираем предложения обратно по исходным текстам
+        results = []
+        offset = 0
+        for count in text_sent_counts:
+            text_sents = all_dicts[offset:offset + count]
+            if output_format == "conllu":
+                results.append(self._format_connlu_output(text_sents))
+            else:
+                results.append(text_sents)
+            offset += count
+
+        return results
 
     @modal.method()
     def parse_text_native(
         self, 
         text: str, 
-        output_format: str = 'conllu'
+        output_format: str = 'dict'
     ) -> Union[List, str, Dict]:
         parsed_batch = self.model([text])
-        results = []
-        for sent_conllu in parsed_batch:
-            sent_res = []
-            lines = [l for l in sent_conllu.split('\n') if l and not l.startswith('#')]
 
-            for line in lines:
-                fields = line.split('\t')
-                if '-' in fields[0]:
-                    continue
-
-                sent_res.append({
-                    'id': int(fields[0]),
-                    'form': fields[1],
-                    'lemma': fields[2],
-                    'upos': fields[3],
-                    'xpos': fields[4],
-                    'feats': fields[5],
-                    'head': int(fields[6]),
-                    'deprel': fields[7],
-                    'deps': fields[8],
-                    'misc': fields[9]
-                })
-
-            results.append(sent_res)
+        # token_spans пустые — offsets при нативном токенизаторе недоступны
+        token_spans = [[] for _ in parsed_batch]
+        results = self._parse_batch_to_dicts(parsed_batch, token_spans)
 
         if output_format == 'conllu':
-            return self._format_native_output(results)
+            return self._format_connlu_output(results)
         else:
             return results
 
 
 @app.local_entrypoint()
 def main():
-    test_text = "Мама мыла раму."
-    print("🚀 Testing DeepPavlov (production)...\n")
+    import json
+
+    SEP = "=" * 70
+    TEST_TEXT = (
+        "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
+    )
+
     service = DeepPavlovService()
+    print(f"\n{SEP}")
+    print("🚀 Testing DeepPavlov (production)")
+    print(f"   Text: {TEST_TEXT}")
+    print(f"{SEP}")
 
-    result = service.parse_text.remote(test_text, output_format='full')
+    # --- ВАРИАНТ 1: conllu (dict) ---
+    print(f"\n{SEP}")
+    print("📊 ВАРИАНТ 1: CoNLL-U (str)")
+    print(f"{SEP}")
+    result_conllu = service.parse_text.remote(TEST_TEXT, output_format="conllu")
+    # result_conllu — строка CoNLL-U, выводим как есть
+    print(result_conllu)
 
-    print(f"📊 probas_source: {result['metadata']['probas_source']}")
-    print(f"✅ Done!")
+    # --- ВАРИАНТ 2: dict (все поля) ---
+    print(f"\n{SEP}")
+    print("📊 ВАРИАНТ 2: dict (все CoNLL-U поля)")
+    print(f"{SEP}")
+    result_dict = service.parse_text.remote(TEST_TEXT, output_format="dict")
+    for sidx, sent in enumerate(result_dict, 1):
+        print(f"\n--- Sentence {sidx} ---")
+        print(f"{'ID':>4} {'FORM':<16} {'LEMMA':<16} {'UPOS':<8} {'XPOS':<8} "
+              f"{'FEATS':<36} {'HEAD':>5} {'DEPREL':<14} {'DEPS':<6} {'MISC':<10} START END")
+        print("-" * 130)
+        for t in sent:
+            # feats_d = (t['feats'] or "_")[:34]
+            print(f"{t['id']:>4} {t['form']:<16} {t['lemma']:<12} "
+                   f"{t['upos']:<8} {(t['xpos'] or '_'):<6} "
+                   f"{t['head']:>5} {t['deprel']:<14} "
+                   f"{(t['deps'] or '_'):<6} {(t['misc'] or '_'):<10} "
+                   f"{t['startchar']} {t['endchar']}")
+            print(f"     feats: {t['feats'] or '_'}")
+            # print(f"{t['id']:>4} {t['form']:<16} {t['lemma']:<16} {t['upos']:<8} "
+            #       f"{(t['xpos'] or '_'):<8} {feats_d:<36} {t['head']:>5} "
+            #       f"{t['deprel']:<14} {(t['deps'] or '_'):<6} {(t['misc'] or '_'):<10} "
+            #       f"{t['startchar']} {t['endchar']}")
+    print(f"\n--- Keys in first token ---")
+    print(json.dumps(result_dict[0][0], ensure_ascii=False, indent=2))
+
+    # --- ВАРИАНТ 3: full (probas, топ-3 токена) ---
+    print(f"\n{SEP}")
+    print("📊 ВАРИАНТ 3: full (с probas, первые 3 токена)")
+    print(f"{SEP}")
+    result_full = service.parse_text.remote(TEST_TEXT, output_format="full")
+    print(f"  probas_source: {result_full['metadata']['probas_source']}")
+    print(f"  sentences: {len(result_full['sentences'])}")
+    for tok in result_full["sentences"][0][:3]:
+        print(f"\n  [{tok['id']}] {tok['form']}")
+        print(f"      UPOS: {tok['upos']}  conf={tok.get('upos_proba', 0):.4f}")
+        print(f"      Head: {tok['head']}  Deprel: {tok['deprel']}")
+    print(f"\n✅ Done!")
+

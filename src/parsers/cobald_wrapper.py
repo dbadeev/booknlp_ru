@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Literal
 
 import modal
 
-logger = logging.getLogger(__name__)
+# logger = logging.getLogger(__name__)
 
 OutputFormat = Literal["dict", "native"]
 
@@ -73,10 +73,10 @@ class CobaldParser:
         """
         try:
             result = self.service.parse.remote(text, output_format=output_format)
-            if not result:
-                self.logger.warning("Сервис вернул пустой результат.")
+            if result is None:
+                self.logger.warning("Сервис вернул None.")
                 return []
-            return result
+            return result  # [] для пустого текста — корректный результат
         except Exception as e:
             self.logger.error(f"❌ Ошибка при разборе: {e}")
             raise

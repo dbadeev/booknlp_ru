@@ -178,9 +178,11 @@ class SpacyPymorphy3Parser:
       feats  (spaCy/UD)     ≠  pymorphy3_tag    — UD формат vs OpenCorpora
     """
 
-    def __init__(self):
+    def __init__(self, spacy_parser: "SpacyParser | None" = None):
         import pymorphy3
-        self.spacy_parser = SpacyParser()
+        # Принимаем уже созданный SpacyParser или создаём новый.
+        # Это предотвращает двойное подключение к Modal при совместном использовании.
+        self.spacy_parser = spacy_parser if spacy_parser is not None else SpacyParser()
         self.morph = pymorphy3.MorphAnalyzer()
         self.logger = logging.getLogger(__name__)
         self.logger.info("✓ SpaCy+Pymorphy3 parser initialized.")
@@ -393,7 +395,8 @@ if __name__ == "__main__":
         print("  modal serve src/parsers/spacy_modal.py")
         sys.exit(1)
 
-    parser_enriched = SpacyPymorphy3Parser()
+    # parser_enriched = SpacyPymorphy3Parser()
+    parser_enriched = SpacyPymorphy3Parser(spacy_parser=parser)  # ← переиспользует
 
     # Тестовые тексты
     test_short   = "Кружка-термос стоит 500р."
