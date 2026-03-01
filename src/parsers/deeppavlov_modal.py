@@ -1,6 +1,7 @@
 import modal
 from typing import List, Dict, Any, Union, Optional, Tuple
 
+
 dp_image = (
     modal.Image.debian_slim()
     .pip_install(
@@ -234,7 +235,7 @@ class DeepPavlovService:
         self, 
         tokenized_sentences: List[List[str]],
         sentences_dict: List[List[Dict]]
-    ) -> tuple:
+    ) -> Tuple[List[List[float]], List[List[List[float]]], List[List[Dict[str, float]]]]:
         import torch.nn.functional as functional
 
         upos_probas_all = []
@@ -339,9 +340,9 @@ class DeepPavlovService:
     ) -> Dict[str, Any]:
 
         all_sentences_dict: List[List[Dict]] = []
-        all_upos_probas: List = []
-        all_heads_probas: List = []
-        all_deps_probas: List = []
+        all_upos_probas: List[List[float]] = []
+        all_heads_probas: List[List[List[float]]] = []
+        all_deps_probas: List[List[Dict[str, float]]] = []
 
         for chunk_start in range(0, len(tokenized_sentences), sentence_batch_size):
             chunk_end = chunk_start + sentence_batch_size
@@ -543,17 +544,12 @@ def main():
               f"{'FEATS':<36} {'HEAD':>5} {'DEPREL':<14} {'DEPS':<6} {'MISC':<10} START END")
         print("-" * 130)
         for t in sent:
-            # feats_d = (t['feats'] or "_")[:34]
             print(f"{t['id']:>4} {t['form']:<16} {t['lemma']:<12} "
                    f"{t['upos']:<8} {(t['xpos'] or '_'):<6} "
                    f"{t['head']:>5} {t['deprel']:<14} "
                    f"{(t['deps'] or '_'):<6} {(t['misc'] or '_'):<10} "
                    f"{t['startchar']} {t['endchar']}")
             print(f"     feats: {t['feats'] or '_'}")
-            # print(f"{t['id']:>4} {t['form']:<16} {t['lemma']:<16} {t['upos']:<8} "
-            #       f"{(t['xpos'] or '_'):<8} {feats_d:<36} {t['head']:>5} "
-            #       f"{t['deprel']:<14} {(t['deps'] or '_'):<6} {(t['misc'] or '_'):<10} "
-            #       f"{t['startchar']} {t['endchar']}")
     print(f"\n--- Keys in first token ---")
     print(json.dumps(result_dict[0][0], ensure_ascii=False, indent=2))
 

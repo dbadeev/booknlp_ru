@@ -20,9 +20,9 @@ class DeepPavlovParser:
         try:
             self.service = modal.Cls.from_name("booknlp-ru-deeppavlov", "DeepPavlovService")()
             self.logger.info(f"Connected to DeepPavlov via Modal (tokenizer: {tokenizer}).")
-        except Exception as e2:
-            self.logger.error(f"Failed to connect to Modal app: {e2}")
-            raise e2
+        except Exception as e:
+            self.logger.error(f"Failed to connect to Modal app: {e}")
+            raise e
 
     def parse_text(
             self,
@@ -44,11 +44,12 @@ class DeepPavlovParser:
                 return self.service.parse_text_native.remote(
                     text,
                     output_format=output_format,
+                    sentence_batch_size=sentence_batch_size,
                 )
             else:
                 raise ValueError(f"Unknown tokenizer: {self.tokenizer_type}")
-        except Exception as e2:
-            self.logger.error(f"Error during DeepPavlov parsing: {e2}")
+        except Exception as e:
+            self.logger.error(f"Error during DeepPavlov parsing: {e}")
             raise
 
     def parse_batch(
@@ -66,8 +67,10 @@ class DeepPavlovParser:
                 )
             elif self.tokenizer_type == "native":
                 if output_format == "full":
-                    self.logger.warning("Full format not supported with native tokenizer.")
-                    output_format = "dict"
+                    raise ValueError(
+                        "output_format='full' is not supported with native tokenizer. "
+                        "Use tokenizer='razdel' for full format."
+                    )
                 return list(
                     self.service.parse_text_native.map(
                         texts,
@@ -79,8 +82,8 @@ class DeepPavlovParser:
                 )
             else:
                 raise ValueError(f"Unknown tokenizer: {self.tokenizer_type}")
-        except Exception as e2:
-            self.logger.error(f"Error during DeepPavlov batch parsing: {e2}")
+        except Exception as e:
+            self.logger.error(f"Error during DeepPavlov batch parsing: {e}")
             raise
 
 
