@@ -1,5 +1,5 @@
 import modal
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any, Union, Optional, Tuple
 
 dp_image = (
     modal.Image.debian_slim()
@@ -38,7 +38,7 @@ class DeepPavlovService:
     model: Any
     morpho_tagger_component: Any
     syntax_parser_component: Any
-    deprel_vocab: List[str]
+    deprel_vocab: Optional[List[str]]
     hook_handles: List
     _last_upos_logits: Any
     _last_heads_logits: Any
@@ -235,7 +235,7 @@ class DeepPavlovService:
         tokenized_sentences: List[List[str]],
         sentences_dict: List[List[Dict]]
     ) -> tuple:
-        import torch.nn.functional as F
+        import torch.nn.functional as functional
 
         upos_probas_all = []
         heads_probas_all = []
@@ -249,17 +249,18 @@ class DeepPavlovService:
             if (self.morpho_tagger_component and 
                 hasattr(self.morpho_tagger_component, '_last_upos_logits')):
                 try:
+                    # noinspection PyProtectedMember
                     batch_logits = self.morpho_tagger_component._last_upos_logits
                     if sent_idx < len(batch_logits):
                         sent_logits = batch_logits[sent_idx]
-                        sent_probas = F.softmax(sent_logits, dim=-1).numpy()
+                        sent_probas = functional.softmax(sent_logits, dim=-1).numpy()
                         upos_probas_all.append([
                             float(sent_probas[tok_idx].max())
                             for tok_idx in range(min(sent_len, len(sent_probas)))
                         ])
                     else:
                         upos_probas_all.append([0.95] * sent_len)
-                except Exception:
+                except Exception:  # noqa: BLE001  # logit extraction may fail for many reasons
                     upos_probas_all.append([0.95] * sent_len)
             else:
                 upos_probas_all.append([0.95] * sent_len)
@@ -268,10 +269,11 @@ class DeepPavlovService:
             if (self.syntax_parser_component and 
                 hasattr(self.syntax_parser_component, '_last_heads_logits')):
                 try:
+                    # noinspection PyProtectedMember
                     batch_heads = self.syntax_parser_component._last_heads_logits
                     if sent_idx < len(batch_heads):
                         sent_heads_logits = batch_heads[sent_idx]
-                        sent_heads = F.softmax(sent_heads_logits, dim=-1).numpy()
+                        sent_heads = functional.softmax(sent_heads_logits, dim=-1).numpy()
                         heads_probas_all.append([
                             sent_heads[tok_idx].tolist()
                             for tok_idx in range(min(sent_len, len(sent_heads)))
@@ -280,7 +282,7 @@ class DeepPavlovService:
                         heads_probas_all.append(
                             [[1.0/(sent_len+1)] * (sent_len+1) for _ in range(sent_len)]
                         )
-                except Exception:
+                except Exception:# noqa: BLE001  # logit extraction may fail for many reasons
                     heads_probas_all.append(
                         [[1.0/(sent_len+1)] * (sent_len+1) for _ in range(sent_len)]
                     )
@@ -293,6 +295,7 @@ class DeepPavlovService:
             if (self.syntax_parser_component and 
                 hasattr(self.syntax_parser_component, '_last_deps_logits')):
                 try:
+                    # noinspection PyProtectedMember
                     batch_deps = self.syntax_parser_component._last_deps_logits
                     if sent_idx < len(batch_deps):
                         sent_deps_logits = batch_deps[sent_idx]
@@ -303,7 +306,7 @@ class DeepPavlovService:
                                 if sent_idx < len(sentences_dict) and tok_idx < len(sentences_dict[sent_idx]):
                                     chosen_head = sentences_dict[sent_idx][tok_idx]['head']
                                     tok_deps_logits = sent_deps_logits[tok_idx, chosen_head, :]
-                                    tok_deps_probas = F.softmax(tok_deps_logits, dim=-1).numpy()
+                                    tok_deps_probas = functional.softmax(tok_deps_logits, dim=-1).numpy()
 
                                     deps_dict = {}
                                     for dep_idx, prob in enumerate(tok_deps_probas):
@@ -318,7 +321,7 @@ class DeepPavlovService:
                         deps_probas_all.append(deps_list)
                     else:
                         deps_probas_all.append([{'root': 0.95} for _ in range(sent_len)])
-                except Exception:
+                except Exception:  # noqa: BLE001  # logit extraction may fail for many reasons
                     deps_probas_all.append([{'root': 0.95} for _ in range(sent_len)])
             else:
                 deps_probas_all.append([{'root': 0.95} for _ in range(sent_len)])
@@ -328,7 +331,7 @@ class DeepPavlovService:
     def _parse_with_probas(
             self,
             tokenized_sentences: List[List[str]],
-            token_spans: List[List[tuple]],
+            token_spans: List[List[Tuple[int, int]]],
             sentence_batch_size: int = 32,
     ) -> Dict[str, Any]:
 
@@ -486,11 +489,7 @@ class DeepPavlovService:
         output_format: str = 'dict',
         sentence_batch_size: int = 32,
     ) -> Union[List, str, Dict]:
-        # import os
         from razdel import sentenize
-
-        # if sentence_batch_size <= 0:
-        #     sentence_batch_size = int(os.environ.get("SENTENCE_BATCH_SIZE", 32))
 
         sentence_texts = [sent.text for sent in sentenize(text)]
         results: List[List[Dict]] = []
@@ -510,31 +509,31 @@ class DeepPavlovService:
 def main():
     import json
 
-    SEP = "=" * 70
-    TEST_TEXT = (
+    sep = "=" * 70
+    test_text = (
         "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
     )
 
     # service = DeepPavlovService()
     service: Any = DeepPavlovService()  # type: ignore[call-arg]
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("🚀 Testing DeepPavlov (production)")
-    print(f"   Text: {TEST_TEXT}")
-    print(f"{SEP}")
+    print(f"   Text: {test_text}")
+    print(f"{sep}")
 
     # --- ВАРИАНТ 1: conllu (dict) ---
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("📊 ВАРИАНТ 1: CoNLL-U (str)")
-    print(f"{SEP}")
-    result_conllu = service.parse_text.remote(TEST_TEXT, output_format="conllu")
+    print(f"{sep}")
+    result_conllu = service.parse_text.remote(test_text, output_format="conllu")
     # result_conllu — строка CoNLL-U, выводим как есть
     print(result_conllu)
 
     # --- ВАРИАНТ 2: dict (все поля) ---
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("📊 ВАРИАНТ 2: dict (все CoNLL-U поля)")
-    print(f"{SEP}")
-    result_dict = service.parse_text.remote(TEST_TEXT, output_format="dict")
+    print(f"{sep}")
+    result_dict = service.parse_text.remote(test_text, output_format="dict")
     for sidx, sent in enumerate(result_dict, 1):
         print(f"\n--- Sentence {sidx} ---")
         print(f"{'ID':>4} {'FORM':<16} {'LEMMA':<16} {'UPOS':<8} {'XPOS':<8} "
@@ -556,10 +555,10 @@ def main():
     print(json.dumps(result_dict[0][0], ensure_ascii=False, indent=2))
 
     # --- ВАРИАНТ 3: full (probas, топ-3 токена) ---
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("📊 ВАРИАНТ 3: full (с probas, первые 3 токена)")
-    print(f"{SEP}")
-    result_full = service.parse_text.remote(TEST_TEXT, output_format="full")
+    print(f"{sep}")
+    result_full = service.parse_text.remote(test_text, output_format="full")
     print(f"  probas_source: {result_full['metadata']['probas_source']}")
     print(f"  sentences: {len(result_full['sentences'])}")
     for tok in result_full["sentences"][0][:3]:
