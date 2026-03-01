@@ -324,56 +324,120 @@ class DeepPavlovService:
                 deps_probas_all.append([{'root': 0.95} for _ in range(sent_len)])
 
         return upos_probas_all, heads_probas_all, deps_probas_all
+    #
+    # def _parse_with_probas(
+    #     self,
+    #     tokenized_sentences: List[List[str]],
+    #     token_spans: List[List[tuple]]
+    # ) -> Dict[str, Any]:
+    #
+    #     parsed_batch = self.model(tokenized_sentences)
+    #
+    #     sentences_dict = self._parse_batch_to_dicts(parsed_batch, token_spans)
+    #     upos_probas, heads_probas, deps_probas = self._extract_real_probas(
+    #         tokenized_sentences, sentences_dict
+    #     )
+    #
+    #     for sent_idx, sent_tokens in enumerate(sentences_dict):
+    #         for tok_idx, token in enumerate(sent_tokens):
+    #             if sent_idx < len(upos_probas) and tok_idx < len(upos_probas[sent_idx]):
+    #                 token['upos_proba'] = upos_probas[sent_idx][tok_idx]
+    #             else:
+    #                 token['upos_proba'] = 0.95
+    #
+    #             if sent_idx < len(heads_probas) and tok_idx < len(heads_probas[sent_idx]):
+    #                 token['heads_proba'] = heads_probas[sent_idx][tok_idx]
+    #             else:
+    #                 token['heads_proba'] = [1.0/(len(sent_tokens)+1)] * (len(sent_tokens)+1)
+    #
+    #             if sent_idx < len(deps_probas) and tok_idx < len(deps_probas[sent_idx]):
+    #                 token['deps_proba'] = deps_probas[sent_idx][tok_idx]
+    #             else:
+    #                 token['deps_proba'] = {'root': 0.95}
+    #
+    #     result = {
+    #         'format': 'full',
+    #         'conllu': self._format_connlu_output(sentences_dict),
+    #         'sentences': sentences_dict,
+    #         'metadata': {
+    #             'model': 'ru_syntagrus_joint_parsing',
+    #             'tokenizer': 'razdel',
+    #             'vocab': {'deprels': self._get_deprel_vocab()},
+    #             'probas_source': 'real_from_raw_logits'
+    #         }
+    #     }
+    #
+    #     return result
 
     def _parse_with_probas(
-        self, 
-        tokenized_sentences: List[List[str]],
-        token_spans: List[List[tuple]]
+            self,
+            tokenized_sentences: List[List[str]],
+            token_spans: List[List[tuple]],
+            sentence_batch_size: int = 32,
     ) -> Dict[str, Any]:
 
-        parsed_batch = self.model(tokenized_sentences)
+        all_sentences_dict: List[List[Dict]] = []
+        all_upos_probas: List = []
+        all_heads_probas: List = []
+        all_deps_probas: List = []
 
-        sentences_dict = self._parse_batch_to_dicts(parsed_batch, token_spans)
-        upos_probas, heads_probas, deps_probas = self._extract_real_probas(
-            tokenized_sentences, sentences_dict
-        )
+        for chunk_start in range(0, len(tokenized_sentences), sentence_batch_size):
+            chunk_end = chunk_start + sentence_batch_size
+            chunk_tokenized = tokenized_sentences[chunk_start:chunk_end]
+            chunk_spans = token_spans[chunk_start:chunk_end]
 
-        for sent_idx, sent_tokens in enumerate(sentences_dict):
+            parsed_chunk = self.model(chunk_tokenized)
+            chunk_dicts = self._parse_batch_to_dicts(parsed_chunk, chunk_spans)
+
+            # ← вызывать СРАЗУ: хуки содержат логиты только текущего чанка
+            upos_p, heads_p, deps_p = self._extract_real_probas(
+                chunk_tokenized, chunk_dicts
+            )
+
+            all_sentences_dict.extend(chunk_dicts)
+            all_upos_probas.extend(upos_p)
+            all_heads_probas.extend(heads_p)
+            all_deps_probas.extend(deps_p)
+
+        for sent_idx, sent_tokens in enumerate(all_sentences_dict):
             for tok_idx, token in enumerate(sent_tokens):
-                if sent_idx < len(upos_probas) and tok_idx < len(upos_probas[sent_idx]):
-                    token['upos_proba'] = upos_probas[sent_idx][tok_idx]
-                else:
-                    token['upos_proba'] = 0.95
+                token['upos_proba'] = (
+                    all_upos_probas[sent_idx][tok_idx]
+                    if sent_idx < len(all_upos_probas)
+                       and tok_idx < len(all_upos_probas[sent_idx])
+                    else 0.95
+                )
+                token['heads_proba'] = (
+                    all_heads_probas[sent_idx][tok_idx]
+                    if sent_idx < len(all_heads_probas)
+                       and tok_idx < len(all_heads_probas[sent_idx])
+                    else [1.0 / (len(sent_tokens) + 1)] * (len(sent_tokens) + 1)
+                )
+                token['deps_proba'] = (
+                    all_deps_probas[sent_idx][tok_idx]
+                    if sent_idx < len(all_deps_probas)
+                       and tok_idx < len(all_deps_probas[sent_idx])
+                    else {'root': 0.95}
+                )
 
-                if sent_idx < len(heads_probas) and tok_idx < len(heads_probas[sent_idx]):
-                    token['heads_proba'] = heads_probas[sent_idx][tok_idx]
-                else:
-                    token['heads_proba'] = [1.0/(len(sent_tokens)+1)] * (len(sent_tokens)+1)
-
-                if sent_idx < len(deps_probas) and tok_idx < len(deps_probas[sent_idx]):
-                    token['deps_proba'] = deps_probas[sent_idx][tok_idx]
-                else:
-                    token['deps_proba'] = {'root': 0.95}
-
-        result = {
+        return {
             'format': 'full',
-            'conllu': self._format_connlu_output(sentences_dict),
-            'sentences': sentences_dict,
+            'conllu': self._format_connlu_output(all_sentences_dict),
+            'sentences': all_sentences_dict,
             'metadata': {
                 'model': 'ru_syntagrus_joint_parsing',
                 'tokenizer': 'razdel',
                 'vocab': {'deprels': self._get_deprel_vocab()},
-                'probas_source': 'real_from_raw_logits'
+                'probas_source': 'real_from_raw_logits',
             }
         }
-
-        return result
 
     @modal.method()
     def parse_text(
             self,
             text: str,
             output_format: str = "dict",
+            sentence_batch_size: int = 32,
     ) -> Union[List[List[Dict[str, Any]]], str, Dict[str, Any]]:
         from razdel import tokenize, sentenize
 
@@ -392,8 +456,26 @@ class DeepPavlovService:
         if output_format == "full":
             return self._parse_with_probas(tokenized_sentences, token_spans)
 
-        parsed_batch = self.model(tokenized_sentences)
-        results = self._parse_batch_to_dicts(parsed_batch, token_spans)
+        results: List[List[Dict[str, Any]]] = []
+        for chunk_start in range(0, len(tokenized_sentences), sentence_batch_size):
+            chunk_end = chunk_start + sentence_batch_size
+            parsed_chunk = self.model(tokenized_sentences[chunk_start:chunk_end])
+            results.extend(
+                self._parse_batch_to_dicts(
+                    parsed_chunk, token_spans[chunk_start:chunk_end]
+                )
+            )
+
+        # all_dicts = []
+        # for i in range(0, len(tokenized_sentences), sentence_batch_size):
+        #     chunk = tokenized_sentences[i:i + sentence_batch_size]
+        #     spans_chunk = token_spans[i:i + sentence_batch_size]
+        #     parsed = self.model(chunk)
+        #     all_dicts.extend(self._parse_batch_to_dicts(parsed, spans_chunk))
+        #
+        #
+        # parsed_batch = self.model(tokenized_sentences)
+        # results = self._parse_batch_to_dicts(parsed_batch, token_spans)
 
         if output_format == "conllu":
             return self._format_connlu_output(results)
@@ -452,22 +534,48 @@ class DeepPavlovService:
 
         return results
 
+    # @modal.method()
+    # def parse_text_native(
+    #     self,
+    #     text: str,
+    #     output_format: str = 'dict'
+    # ) -> Union[List, str, Dict]:
+    #     parsed_batch = self.model([text])
+    #
+    #     # token_spans пустые — offsets при нативном токенизаторе недоступны
+    #     token_spans = [[] for _ in parsed_batch]
+    #     results = self._parse_batch_to_dicts(parsed_batch, token_spans)
+    #
+    #     if output_format == 'conllu':
+    #         return self._format_connlu_output(results)
+    #     else:
+    #         return results
+
     @modal.method()
     def parse_text_native(
-        self, 
-        text: str, 
-        output_format: str = 'dict'
+        self,
+        text: str,
+        output_format: str = 'dict',
+        sentence_batch_size: int = 32,
     ) -> Union[List, str, Dict]:
-        parsed_batch = self.model([text])
+        # import os
+        from razdel import sentenize
 
-        # token_spans пустые — offsets при нативном токенизаторе недоступны
-        token_spans = [[] for _ in parsed_batch]
-        results = self._parse_batch_to_dicts(parsed_batch, token_spans)
+        # if sentence_batch_size <= 0:
+        #     sentence_batch_size = int(os.environ.get("SENTENCE_BATCH_SIZE", 32))
+
+        sentence_texts = [sent.text for sent in sentenize(text)]
+        results: List[List[Dict]] = []
+
+        for chunk_start in range(0, len(sentence_texts), sentence_batch_size):
+            chunk = sentence_texts[chunk_start:chunk_start + sentence_batch_size]
+            parsed_chunk = self.model(chunk)
+            token_spans = [[] for _ in parsed_chunk]
+            results.extend(self._parse_batch_to_dicts(parsed_chunk, token_spans))
 
         if output_format == 'conllu':
             return self._format_connlu_output(results)
-        else:
-            return results
+        return results
 
 
 @app.local_entrypoint()
