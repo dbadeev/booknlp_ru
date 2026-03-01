@@ -248,6 +248,7 @@ class DeepPavlovService:
             # UPOS
             if (self.morpho_tagger_component and 
                 hasattr(self.morpho_tagger_component, '_last_upos_logits')):
+                # noinspection PyBroadException
                 try:
                     # noinspection PyProtectedMember
                     batch_logits = self.morpho_tagger_component._last_upos_logits
@@ -268,6 +269,7 @@ class DeepPavlovService:
             # HEADS
             if (self.syntax_parser_component and 
                 hasattr(self.syntax_parser_component, '_last_heads_logits')):
+                # noinspection PyBroadException
                 try:
                     # noinspection PyProtectedMember
                     batch_heads = self.syntax_parser_component._last_heads_logits
@@ -294,6 +296,7 @@ class DeepPavlovService:
             # DEPS
             if (self.syntax_parser_component and 
                 hasattr(self.syntax_parser_component, '_last_deps_logits')):
+                # noinspection PyBroadException
                 try:
                     # noinspection PyProtectedMember
                     batch_deps = self.syntax_parser_component._last_deps_logits
@@ -306,12 +309,12 @@ class DeepPavlovService:
                                 if sent_idx < len(sentences_dict) and tok_idx < len(sentences_dict[sent_idx]):
                                     chosen_head = sentences_dict[sent_idx][tok_idx]['head']
                                     tok_deps_logits = sent_deps_logits[tok_idx, chosen_head, :]
-                                    tok_deps_probas = functional.softmax(tok_deps_logits, dim=-1).numpy()
+                                    tok_deps_probas: list = functional.softmax(tok_deps_logits, dim=-1).tolist()
 
                                     deps_dict = {}
                                     for dep_idx, prob in enumerate(tok_deps_probas):
                                         if dep_idx < len(deprel_vocab):
-                                            deps_dict[deprel_vocab[dep_idx]] = float(prob)
+                                            deps_dict[deprel_vocab[dep_idx]] = prob
                                     deps_list.append(deps_dict)
                                 else:
                                     deps_list.append({'root': 0.95})
@@ -402,7 +405,7 @@ class DeepPavlovService:
 
         sentences = list(sentenize(text))
         tokenized_sentences: List[List[str]] = []
-        token_spans: List[List[tuple]] = []
+        token_spans: List[List[Tuple[int, int]]] = []
 
         for sent in sentences:
             tokens = list(tokenize(sent.text))
@@ -441,7 +444,7 @@ class DeepPavlovService:
 
         # Шаг 1: токенизируем все тексты, собираем предложения в плоский список
         all_tokenized: List[List[str]] = []
-        all_spans: List[List[tuple]] = []
+        all_spans: List[List[Tuple[int, int]]] = []
         text_sent_counts: List[int] = []
 
         for text in texts:
