@@ -3,9 +3,18 @@
 Обёртка для DeepPavlov (через Modal) с поддержкой ПОЛНОГО выхода.
 """
 
+
+#!/usr/bin/env python3
+"""
+Обёртка для DeepPavlov (через Modal) с поддержкой ПОЛНОГО выхода.
+Chunking по 32 предложения выполняется на стороне wrapper,
+Modal распределяет чанки по контейнерам через .map().
+"""
+
 import logging
 import modal
-from typing import List, Dict, Any, Literal, Union
+from razdel import sentenize                        # ← новый импорт
+from typing import List, Dict, Any, Literal, Union, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -16,72 +25,212 @@ class DeepPavlovParser:
     def __init__(self, tokenizer: Literal['razdel', 'native'] = 'razdel'):
         self.logger = logging.getLogger(__name__)
         self.tokenizer_type = tokenizer
-
         try:
-            self.service = modal.Cls.from_name("booknlp-ru-deeppavlov", "DeepPavlovService")()
-            self.logger.info(f"Connected to DeepPavlov via Modal (tokenizer: {tokenizer}).")
+            self.service = modal.Cls.from_name(
+                "booknlp-ru-deeppavlov", "DeepPavlovService"
+            )()
+            self.logger.info(
+                f"Connected to DeepPavlov via Modal (tokenizer: {tokenizer})."
+            )
         except Exception as e:
             self.logger.error(f"Failed to connect to Modal app: {e}")
-            raise e
+            raise
+
+    # ------------------------------------------------------------------ #
+    #  Вспомогательные методы                                             #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _split_to_chunks(
+        text: str,
+        chunk_size: int,
+        base_offset: int = 0,
+    ) -> List[List[Tuple[str, int]]]:
+        """
+        Разбивает текст на чанки по chunk_size предложений.
+        Возвращает List[List[(sentence_text, start_char_in_original_text)]].
+        base_offset — смещение text внутри более крупного документа (для parse_batch).
+        """
+        sentences = list(sentenize(text))
+        chunks = []
+        for i in range(0, len(sentences), chunk_size):
+            chunk = [
+                (s.text, base_offset + s.start)
+                for s in sentences[i:i + chunk_size]
+            ]
+            chunks.append(chunk)
+        return chunks
+
+    @staticmethod
+    def _format_conllu_local(sentences: List[List[Dict]]) -> str:
+        """Локальное форматирование CoNLL-U (зеркало modal._format_connlu_output)."""
+        blocks = []
+        for sent in sentences:
+            lines = []
+            for t in sent:
+                if '-' in str(t.get('id', '')):
+                    continue
+                lines.append('\t'.join([
+                    str(t.get('id', 0)),
+                    t.get('form', '_'),
+                    t.get('lemma', '_'),
+                    t.get('upos', '_'),
+                    t.get('xpos', '_'),
+                    t.get('feats', '_'),
+                    str(t.get('head', 0)),
+                    t.get('deprel', '_'),
+                    t.get('deps', '_'),
+                    t.get('misc', '_'),
+                ]))
+            blocks.append('\n'.join(lines))
+        return '\n\n'.join(blocks) + '\n'
+
+    @staticmethod
+    def _merge_chunks(
+        chunk_results: List[Union[List[List[Dict]], Dict]],
+        output_format: str,
+    ) -> Union[List[List[Dict]], str, Dict]:
+        """
+        Склеивает результаты чанков в единый результат.
+        chunk_results при output_format="conllu" содержат dict,
+        потому что CoNLL-U форматируется локально после сборки.
+        """
+        if output_format == "full":
+            all_sentences: List[List[Dict]] = []
+            all_conllu_parts: List[str] = []
+            metadata: Dict = {}
+            for cr in chunk_results:
+                all_sentences.extend(cr['sentences'])
+                all_conllu_parts.append(cr['conllu'].rstrip('\n'))
+                metadata = cr.get('metadata', metadata)
+            return {
+                'format': 'full',
+                'conllu': '\n\n'.join(all_conllu_parts) + '\n',
+                'sentences': all_sentences,
+                'metadata': metadata,
+            }
+
+        # dict или conllu: чанки пришли как List[List[Dict]]
+        all_sents: List[List[Dict]] = [
+            sent for cr in chunk_results for sent in cr
+        ]
+        if output_format == "conllu":
+            return DeepPavlovParser._format_conllu_local(all_sents)
+        return all_sents  # "dict"
+
+    # ------------------------------------------------------------------ #
+    #  Публичный API                                                       #
+    # ------------------------------------------------------------------ #
 
     def parse_text(
-            self,
-            text: str,
-            output_format: str = "dict",
-            sentence_batch_size: int = 32,
+        self,
+        text: str,
+        output_format: str = "dict",
+        chunk_size: int = 32,
     ) -> Union[List[List[Dict[str, Any]]], str, Dict[str, Any]]:
         try:
-            if self.tokenizer_type == "razdel":
-                return self.service.parse_text.remote(
-                    text,
-                    output_format=output_format,
-                    sentence_batch_size=sentence_batch_size,
-                )
-            elif self.tokenizer_type == "native":
+            if self.tokenizer_type == "native":
                 if output_format == "full":
-                    self.logger.warning("Full format not supported with native tokenizer.")
+                    self.logger.warning(
+                        "Full format not supported with native tokenizer."
+                    )
                     output_format = "dict"
                 return self.service.parse_text_native.remote(
                     text,
                     output_format=output_format,
-                    sentence_batch_size=sentence_batch_size,
+                    sentence_batch_size=chunk_size,
                 )
-            else:
-                raise ValueError(f"Unknown tokenizer: {self.tokenizer_type}")
+
+            # razdel: wrapper делает chunking
+            chunks = self._split_to_chunks(text, chunk_size)
+            if not chunks:
+                return (
+                    {'format': 'full', 'conllu': '', 'sentences': [], 'metadata': {}}
+                    if output_format == "full" else []
+                )
+
+            # Для conllu запрашиваем dict и форматируем локально
+            internal_format = "dict" if output_format == "conllu" else output_format
+
+            if len(chunks) == 1:
+                result = self.service.parse_sentence_chunk.remote(
+                    chunks[0], output_format=internal_format
+                )
+                # Оборачиваем в список для _merge_chunks
+                return self._merge_chunks([result], output_format)
+
+            # Несколько чанков → .map() → Modal распределяет по контейнерам
+            chunk_results = list(
+                self.service.parse_sentence_chunk.map(
+                    chunks,
+                    kwargs={"output_format": internal_format},
+                )
+            )
+            return self._merge_chunks(chunk_results, output_format)
+
         except Exception as e:
             self.logger.error(f"Error during DeepPavlov parsing: {e}")
             raise
 
     def parse_batch(
-            self,
-            texts: List[str],
-            output_format: str = "dict",
-            sentence_batch_size: int = 32,
-    ) -> Union[List[List[List[Dict[str, Any]]]], List[str]]:
+        self,
+        texts: List[str],
+        output_format: str = "dict",
+        chunk_size: int = 32,
+    ) -> List[Union[List[List[Dict[str, Any]]], str, Dict[str, Any]]]:
+        """
+        Разбивает ВСЕ тексты на чанки по chunk_size предложений,
+        отправляет все чанки сразу через .map() — Modal распределяет
+        их по доступным контейнерам (max_containers=4).
+        """
         try:
-            if self.tokenizer_type == "razdel":
-                return self.service.parse_batch.remote(
-                    texts,
-                    output_format=output_format,
-                    sentence_batch_size=sentence_batch_size,
-                )
-            elif self.tokenizer_type == "native":
+            if self.tokenizer_type == "native":
                 if output_format == "full":
                     raise ValueError(
-                        "output_format='full' is not supported with native tokenizer. "
-                        "Use tokenizer='razdel' for full format."
+                        "output_format='full' is not supported with native tokenizer."
                     )
                 return list(
                     self.service.parse_text_native.map(
                         texts,
                         kwargs={
                             "output_format": output_format,
-                            "sentence_batch_size": sentence_batch_size,  # ← добавить
+                            "sentence_batch_size": chunk_size,
                         },
                     )
                 )
-            else:
-                raise ValueError(f"Unknown tokenizer: {self.tokenizer_type}")
+
+            # razdel: wrapper делает chunking по всем текстам
+            internal_format = "dict" if output_format == "conllu" else output_format
+
+            all_chunks: List[List[Tuple[str, int]]] = []
+            chunks_per_text: List[int] = []      # сколько чанков у каждого текста
+
+            for text in texts:
+                text_chunks = self._split_to_chunks(text, chunk_size)
+                chunks_per_text.append(len(text_chunks))
+                all_chunks.extend(text_chunks)
+
+            if not all_chunks:
+                return [[] for _ in texts]
+
+            # Один .map() — все чанки всех текстов одновременно
+            all_chunk_results = list(
+                self.service.parse_sentence_chunk.map(
+                    all_chunks,
+                    kwargs={"output_format": internal_format},
+                )
+            )
+
+            # Reassemble: собираем результаты обратно по текстам
+            results = []
+            offset = 0
+            for n_chunks in chunks_per_text:
+                text_chunk_results = all_chunk_results[offset:offset + n_chunks]
+                results.append(self._merge_chunks(text_chunk_results, output_format))
+                offset += n_chunks
+
+            return results
+
         except Exception as e:
             self.logger.error(f"Error during DeepPavlov batch parsing: {e}")
             raise
