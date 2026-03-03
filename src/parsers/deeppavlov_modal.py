@@ -177,8 +177,19 @@ class DeepPavlovService:
     @staticmethod
     def _format_conllu_output(sentences: List[List[Dict]]) -> str:
         conllu_blocks = []
-        for sent in sentences:
+        for sent_idx, sent in enumerate(sentences, 1):
             lines = []
+
+            # Восстанавливаем текст предложения из токенов
+            sent_text = " ".join(
+                t.get("form", "_")
+                for t in sent
+                if "-" not in str(t.get("id", ""))
+            )
+            # убираем из вывода из-за чанкинга (т.к. нумерация начинается каждый раз внутри чанка, а не всего текста)
+            # lines.append(f"# sent_id = {sent_idx}")
+            lines.append(f"# text = {sent_text}")
+
             for token in sent:
                 if '-' in str(token.get('id', '')):
                     continue
@@ -483,6 +494,11 @@ class DeepPavlovService:
         output_format: str = 'dict',
         sentence_batch_size: int = 32,
     ) -> Union[List, str, Dict]:
+        """
+        Только для local_entrypoint / ручного тестирования.
+        Разбивка на предложения — razdel.sentenize,
+        токенизация слов — нативная DeepPavlov.
+        """
         from razdel import sentenize
 
         sentence_texts = [sent.text for sent in sentenize(text)]

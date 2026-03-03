@@ -230,6 +230,9 @@ class DeepPavlovParser:
                     native_chunks_per_text.append(len(text_chunks))
                     native_chunks.extend(text_chunks)
 
+                if not native_chunks:
+                    return [[] for _ in texts]
+
                 all_chunk_results = list(
                     self.service.parse_sentence_chunk_native.map(
                         native_chunks,
