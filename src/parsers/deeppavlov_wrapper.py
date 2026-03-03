@@ -60,7 +60,7 @@ class DeepPavlovParser:
 
     @staticmethod
     def _format_conllu_local(sentences: List[List[Dict]]) -> str:
-        """Локальное форматирование CoNLL-U (зеркало modal._format_connlu_output)."""
+        """Локальное форматирование CoNLL-U (зеркало modal._format_conllu_output)."""
         blocks = []
         for sent in sentences:
             lines = []
@@ -146,17 +146,6 @@ class DeepPavlovParser:
         chunk_size: int = 32,
     ) -> Union[List[List[Dict[str, Any]]], str, Dict[str, Any]]:
         try:
-            # if self.tokenizer_type == "native":
-            #     if output_format == "full":
-            #         self.logger.warning(
-            #             "Full format not supported with native tokenizer."
-            #         )
-            #         output_format = "dict"
-            #     return self.service.parse_text_native.remote(
-            #         text,
-            #         output_format=output_format,
-            #         sentence_batch_size=chunk_size,
-            #     )
             if self.tokenizer_type == "native":
                 if output_format == "full":
                     self.logger.warning("Full format not supported with native tokenizer.")
@@ -230,28 +219,20 @@ class DeepPavlovParser:
                     raise ValueError(
                         "output_format='full' is not supported with native tokenizer."
                     )
-                # return list(
-                #     self.service.parse_text_native.map(
-                #         texts,
-                #         kwargs={
-                #             "output_format": output_format,
-                #             "sentence_batch_size": chunk_size,
-                #         },
-                #     )
-                # )
+
                 internal_format = "dict" if output_format == "conllu" else output_format
 
-                all_chunks: List[List[str]] = []
-                chunks_per_text: List[int] = []
+                native_chunks: List[List[str]] = []
+                native_chunks_per_text: List[int] = []
 
                 for text in texts:
                     text_chunks = self._split_to_sentence_chunks(text, chunk_size)
-                    chunks_per_text.append(len(text_chunks))
-                    all_chunks.extend(text_chunks)
+                    native_chunks_per_text.append(len(text_chunks))
+                    native_chunks.extend(text_chunks)
 
                 all_chunk_results = list(
                     self.service.parse_sentence_chunk_native.map(
-                        all_chunks,
+                        native_chunks,
                         kwargs={"output_format": internal_format},
                     )
                 )
@@ -259,7 +240,7 @@ class DeepPavlovParser:
                 # Reassemble — идентично razdel-ветке
                 results = []
                 offset = 0
-                for n_chunks in chunks_per_text:
+                for n_chunks in native_chunks_per_text:
                     results.append(self._merge_chunks(
                         all_chunk_results[offset:offset + n_chunks], output_format
                     ))

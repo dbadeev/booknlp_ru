@@ -517,9 +517,6 @@ class DeepPavlovService:
             return self._format_conllu_output(results)
         return results
 
-    # parse_text_native — можно удалить или оставить только для local_entrypoint
-
-
 @app.local_entrypoint()
 def main():
     import json
