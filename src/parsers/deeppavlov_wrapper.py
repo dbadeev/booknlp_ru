@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """
 Обёртка для DeepPavlov (через Modal) с поддержкой ПОЛНОГО выхода.
-"""
-
-
-#!/usr/bin/env python3
-"""
-Обёртка для DeepPavlov (через Modal) с поддержкой ПОЛНОГО выхода.
 Chunking по 32 предложения выполняется на стороне wrapper,
 Modal распределяет чанки по контейнерам через .map().
 """
@@ -51,6 +45,9 @@ class DeepPavlovParser:
         Возвращает List[List[(sentence_text, start_char_in_original_text)]].
         base_offset — смещение text внутри более крупного документа (для parse_batch).
         """
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
+
         sentences = list(sentenize(text))
         chunks = []
         for i in range(0, len(sentences), chunk_size):
@@ -118,9 +115,29 @@ class DeepPavlovParser:
             return DeepPavlovParser._format_conllu_local(all_sents)
         return all_sents  # "dict"
 
+    @staticmethod
+    def _split_to_sentence_chunks(
+            text: str,
+            chunk_size: int,
+    ) -> List[List[str]]:
+        """
+        Разбивает текст на чанки предложений (только тексты, без офсетов).
+        Используется для native-токенизатора.
+        """
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
+        sentences = list(sentenize(text))
+        return [
+            [s.text for s in sentences[i:i + chunk_size]]
+            for i in range(0, len(sentences), chunk_size)
+        ]
+
     # ------------------------------------------------------------------ #
-    #  Публичный API                                                       #
+    #  Публичный API                                                      #
     # ------------------------------------------------------------------ #
+    # razdel:  sentenize → _split_to_chunks         → .map(parse_sentence_chunk)
+    # native:  sentenize → _split_to_sentence_chunks → .map(parse_sentence_chunk_native)
+    # Обе ветки используют .map() с единственным различием — razdel несёт символьные офсеты, native — нет.
 
     def parse_text(
         self,
@@ -129,17 +146,41 @@ class DeepPavlovParser:
         chunk_size: int = 32,
     ) -> Union[List[List[Dict[str, Any]]], str, Dict[str, Any]]:
         try:
+            # if self.tokenizer_type == "native":
+            #     if output_format == "full":
+            #         self.logger.warning(
+            #             "Full format not supported with native tokenizer."
+            #         )
+            #         output_format = "dict"
+            #     return self.service.parse_text_native.remote(
+            #         text,
+            #         output_format=output_format,
+            #         sentence_batch_size=chunk_size,
+            #     )
             if self.tokenizer_type == "native":
                 if output_format == "full":
-                    self.logger.warning(
-                        "Full format not supported with native tokenizer."
-                    )
+                    self.logger.warning("Full format not supported with native tokenizer.")
                     output_format = "dict"
-                return self.service.parse_text_native.remote(
-                    text,
-                    output_format=output_format,
-                    sentence_batch_size=chunk_size,
+                internal_format = "dict" if output_format == "conllu" else output_format
+
+                chunks = self._split_to_sentence_chunks(text, chunk_size)
+                if not chunks:
+                    return []
+
+                if len(chunks) == 1:
+                    res = self.service.parse_sentence_chunk_native.remote(
+                        chunks[0], output_format=internal_format
+                    )
+                    return self._merge_chunks([res], output_format)
+
+                # .map() — Modal распределяет чанки по контейнерам
+                chunk_results = list(
+                    self.service.parse_sentence_chunk_native.map(
+                        chunks,
+                        kwargs={"output_format": internal_format},
+                    )
                 )
+                return self._merge_chunks(chunk_results, output_format)
 
             # razdel: wrapper делает chunking
             chunks = self._split_to_chunks(text, chunk_size)
@@ -189,15 +230,41 @@ class DeepPavlovParser:
                     raise ValueError(
                         "output_format='full' is not supported with native tokenizer."
                     )
-                return list(
-                    self.service.parse_text_native.map(
-                        texts,
-                        kwargs={
-                            "output_format": output_format,
-                            "sentence_batch_size": chunk_size,
-                        },
+                # return list(
+                #     self.service.parse_text_native.map(
+                #         texts,
+                #         kwargs={
+                #             "output_format": output_format,
+                #             "sentence_batch_size": chunk_size,
+                #         },
+                #     )
+                # )
+                internal_format = "dict" if output_format == "conllu" else output_format
+
+                all_chunks: List[List[str]] = []
+                chunks_per_text: List[int] = []
+
+                for text in texts:
+                    text_chunks = self._split_to_sentence_chunks(text, chunk_size)
+                    chunks_per_text.append(len(text_chunks))
+                    all_chunks.extend(text_chunks)
+
+                all_chunk_results = list(
+                    self.service.parse_sentence_chunk_native.map(
+                        all_chunks,
+                        kwargs={"output_format": internal_format},
                     )
                 )
+
+                # Reassemble — идентично razdel-ветке
+                results = []
+                offset = 0
+                for n_chunks in chunks_per_text:
+                    results.append(self._merge_chunks(
+                        all_chunk_results[offset:offset + n_chunks], output_format
+                    ))
+                    offset += n_chunks
+                return results
 
             # razdel: wrapper делает chunking по всем текстам
             internal_format = "dict" if output_format == "conllu" else output_format
@@ -280,7 +347,6 @@ if __name__ == "__main__":
             print(f"📄 DeepPavlov Joint Parsing ({args.tokenizer})")
             print(f"{'─'*70}")
             if not df.empty:
-                # cols = ['id', 'form', 'lemma', 'upos', 'head', 'deprel']
                 cols = ["id", "form", "lemma", "upos", "xpos", "feats", "head", "deprel", "deps", "misc"]
                 available_cols = [col for col in cols if col in df.columns]
                 print(df[available_cols].to_string(index=False))

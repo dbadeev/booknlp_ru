@@ -175,7 +175,7 @@ class DeepPavlovService:
         print("\n✅ Ready\n")
 
     @staticmethod
-    def _format_connlu_output(sentences: List[List[Dict]]) -> str:
+    def _format_conllu_output(sentences: List[List[Dict]]) -> str:
         conllu_blocks = []
         for sent in sentences:
             lines = []
@@ -336,7 +336,7 @@ class DeepPavlovService:
             self,
             tokenized_sentences: List[List[str]],
             token_spans: List[List[Tuple[int, int]]],
-            sentence_batch_size: int = 32,
+            sentence_batch_size: int = 32,  # используется только parse_text
     ) -> Dict[str, Any]:
 
         all_sentences_dict: List[List[Dict]] = []
@@ -385,7 +385,7 @@ class DeepPavlovService:
 
         return {
             'format': 'full',
-            'conllu': self._format_connlu_output(all_sentences_dict),
+            'conllu': self._format_conllu_output(all_sentences_dict),
             'sentences': all_sentences_dict,
             'metadata': {
                 'model': 'ru_syntagrus_joint_parsing',
@@ -431,7 +431,7 @@ class DeepPavlovService:
         results = self._parse_batch_to_dicts(parsed_batch, token_spans)
 
         if output_format == "conllu":
-            return self._format_connlu_output(results)
+            return self._format_conllu_output(results)
         return results  # "dict" → List[List[Dict]]
 
     # ------------------------------------------------------------------ #
@@ -472,61 +472,9 @@ class DeepPavlovService:
             )
 
         if output_format == "conllu":
-            return self._format_connlu_output(results)
+            return self._format_conllu_output(results)
 
         return results  # "dict" → List[List[Dict]]
-
-    # @modal.method()
-    # def parse_batch(
-    #         self,
-    #         texts: List[str],
-    #         output_format: str = "dict",
-    #         sentence_batch_size: int = 32,
-    # ) -> Union[List[List[Dict]], List[str]]:
-    #     from razdel import tokenize, sentenize
-    #
-    #     # Шаг 1: токенизируем все тексты, собираем предложения в плоский список
-    #     all_tokenized: List[List[str]] = []
-    #     all_spans: List[List[Tuple[int, int]]] = []
-    #     text_sent_counts: List[int] = []
-    #
-    #     for text in texts:
-    #         sents = list(sentenize(text))
-    #         count = 0
-    #         for sent in sents:
-    #             tokens = list(tokenize(sent.text))
-    #             all_tokenized.append([t.text for t in tokens])
-    #             all_spans.append([
-    #                 (sent.start + t.start, sent.start + t.stop)
-    #                 for t in tokens
-    #             ])
-    #             count += 1
-    #         text_sent_counts.append(count)
-    #
-    #     # Шаг 2: обрабатываем предложения чанками
-    #     all_dicts: List[List[Dict]] = []
-    #
-    #     for chunk_start in range(0, len(all_tokenized), sentence_batch_size):
-    #         chunk_end = chunk_start + sentence_batch_size
-    #         tokenized_chunk = all_tokenized[chunk_start:chunk_end]
-    #         spans_chunk = all_spans[chunk_start:chunk_end]
-    #
-    #         parsed_chunk = self.model(tokenized_chunk)
-    #         dicts_chunk = self._parse_batch_to_dicts(parsed_chunk, spans_chunk)
-    #         all_dicts.extend(dicts_chunk)
-    #
-    #     # Шаг 3: собираем предложения обратно по исходным текстам
-    #     results = []
-    #     offset = 0
-    #     for count in text_sent_counts:
-    #         text_sents = all_dicts[offset:offset + count]
-    #         if output_format == "conllu":
-    #             results.append(self._format_connlu_output(text_sents))
-    #         else:
-    #             results.append(text_sents)
-    #         offset += count
-    #
-    #     return results
 
     @modal.method()
     def parse_text_native(
@@ -547,8 +495,29 @@ class DeepPavlovService:
             results.extend(self._parse_batch_to_dicts(parsed_chunk, token_spans))
 
         if output_format == 'conllu':
-            return self._format_connlu_output(results)
+            return self._format_conllu_output(results)
         return results
+
+    @modal.method()
+    def parse_sentence_chunk_native(
+            self,
+            sentences: List[str],  # список текстов предложений чанка
+            output_format: str = "dict",
+    ) -> Union[List[List[Dict[str, Any]]], str]:
+        """
+        Принимает готовый чанк предложений (нативная токенизация DeepPavlov).
+        Офсеты недоступны — startchar/endchar будут 0.
+        """
+        # token_spans пустые — нативный токенизатор не даёт символьных позиций
+        token_spans = [[] for _ in sentences]
+        parsed_batch = self.model(sentences)
+        results = self._parse_batch_to_dicts(parsed_batch, token_spans)
+
+        if output_format == "conllu":
+            return self._format_conllu_output(results)
+        return results
+
+    # parse_text_native — можно удалить или оставить только для local_entrypoint
 
 
 @app.local_entrypoint()
