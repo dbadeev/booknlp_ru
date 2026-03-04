@@ -59,6 +59,21 @@ app = modal.App("booknlp-ru-slovnet")
 
 @app.cls(image=image, timeout=600, cpu=2.0)
 class SlovnetService:
+    def __init__(self):
+        # Атрибуты инициализируются в @modal.enter() (setup).
+        # Заглушки для PyCharm — Modal не вызывает __init__.
+        self.logger = None
+        self.navec = None
+        self.syntax = None
+        self.morph = None
+        self.segmenter = None
+        self.morph_vocab = None
+        self.emb = None
+        self.morph_tagger = None
+        self.syntax_parser = None
+        self.ner_tagger = None
+        self.names_extractor = None
+        self.PER = None
 
     @modal.enter()
     def setup(self):
@@ -145,14 +160,13 @@ class SlovnetService:
         except AttributeError:
             return str(feats_obj) or "_"
 
-
-    def _fact_to_dict(self, fact) -> dict:
+    @staticmethod
+    def _fact_to_dict(fact) -> dict:  # ← static, убрать self
         if fact is None:
             return {}
-
-        raw = {}
-        if hasattr(fact, "_asdict"):
-            raw = dict(fact._asdict())
+        if hasattr(fact, '_asdict'):
+            # noinspection PyProtectedMember
+            raw = dict(fact._asdict())  # noqa: SLF001
         elif hasattr(fact, "__dict__"):
             raw = vars(fact)
         else:
@@ -166,6 +180,7 @@ class SlovnetService:
                 if hasattr(slot, "key") and hasattr(slot, "value") and slot.value:
                     result[slot.key] = slot.value
                 elif hasattr(slot, "_asdict"):
+                    # noinspection PyProtectedMember
                     sd = dict(slot._asdict())
                     if sd.get("key") and sd.get("value"):
                         result[sd["key"]] = sd["value"]
@@ -269,7 +284,7 @@ class SlovnetService:
                         }
                         if getattr(span, "text", None): sp["text"] = span.text
                         if getattr(span, "normal", None): sp["normal"] = span.normal
-                        if getattr(span, "fact", None): sp["fact"] = self._fact_to_dict(span.fact)
+                        if getattr(span, "fact", None): sp["fact"] = SlovnetService._fact_to_dict(span.fact)
                         native_spans.append(sp)
                 except Exception as e:
                     self.logger.warning(f"NER failed for '{sent_text[:30]}': {e}")
@@ -333,15 +348,15 @@ def test():
     import json
     logging.basicConfig(level=logging.INFO)
 
-    TEST_TEXT = "Мама Мария без мыла мыла раму. Александр Пушкин родился в Москве."
-    SEP = "=" * 70
+    test_text = "Мама Мария без мыла мыла раму. Александр Пушкин родился в Москве."
+    sep = "=" * 70
     service = SlovnetService()
 
     # ════════════════════════════════════════════
     # 1. CoNLL-U
     # ════════════════════════════════════════════
-    print(f"\n{SEP}\nРЕЖИМ: conllu  →  List[List[Dict]]\n{SEP}")
-    result_conllu = service.parse_text.remote(TEST_TEXT, output_format="conllu")
+    print(f"\n{sep}\nРЕЖИМ: conllu  →  List[List[Dict]]\n{sep}")
+    result_conllu = service.parse_text.remote(test_text, output_format="conllu")
     print(f"Предложений: {len(result_conllu)}\n")
     for s_idx, sent in enumerate(result_conllu, 1):
         print(f"  Предложение {s_idx}:")
@@ -364,8 +379,8 @@ def test():
     # ════════════════════════════════════════════
     # 2. Native
     # ════════════════════════════════════════════
-    print(f"\n{SEP}\nРЕЖИМ: native → Dict{{'sentences': [...], 'spans': [...]}}\n{SEP}")
-    result_native = service.parse_text.remote(TEST_TEXT, output_format="native")
+    print(f"\n{sep}\nРЕЖИМ: native → Dict{{'sentences': [...], 'spans': [...]}}\n{sep}")
+    result_native = service.parse_text.remote(test_text, output_format="native")
     sentences = result_native["sentences"]  # список предложений
     spans = result_native["spans"]
     tokens = [t for sent in sentences for t in sent]  # плоский — только для display
@@ -396,7 +411,7 @@ def test():
     # ════════════════════════════════════════════
     # 3. Сравнение ключей и feats
     # ════════════════════════════════════════════
-    print(f"\n{SEP}\nСРАВНЕНИЕ КЛЮЧЕЙ И ФОРМАТА FEATS\n{SEP}")
+    print(f"\n{sep}\nСРАВНЕНИЕ КЛЮЧЕЙ И ФОРМАТА FEATS\n{sep}")
     ck = set(result_conllu[0][0].keys())
     nk = set(sentences[0][0].keys())
     print(f"  Только в conllu: {sorted(ck - nk)}")

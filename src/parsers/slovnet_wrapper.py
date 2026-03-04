@@ -53,9 +53,9 @@ class SlovnetParser:
         """
         if chunk_size <= 0:
             raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
-        sentences = list(sentenize(text))
+        all_sents = list(sentenize(text))
         return [
-            [(s.text, base_offset + s.start) for s in sentences[i:i + chunk_size]]
+            [(s.text, base_offset + s.start) for s in all_sents[i:i + chunk_size]]
             for i in range(0, len(sentences), chunk_size)
         ]
 
@@ -67,11 +67,11 @@ class SlovnetParser:
     ) -> Union[List[List[Dict[str, Any]]], Dict[str, Any]]:
         if output_format == "conllu":
             # каждый чанк — List[List[Dict]], склеиваем в один List[List[Dict]]
-            return [sent for cr in chunk_results for sent in cr]
+            return [s for cr in chunk_results for s in cr]
         # native: каждый чанк — {"sentences": [...], "spans": [...]}
         return {
-            "sentences": [sent for cr in chunk_results for sent in cr["sentences"]],
-            "spans": [span for cr in chunk_results for span in cr["spans"]],
+            "sentences": [s for cr in chunk_results for s in cr["sentences"]],
+            "spans": [spns for cr in chunk_results for spns in cr["spans"]],
         }
 
     # ── Публичный API ─────────────────────────────────────────────────
