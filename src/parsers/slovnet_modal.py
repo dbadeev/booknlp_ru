@@ -144,6 +144,7 @@ class SlovnetService:
         except AttributeError:
             return str(feats_obj) or "_"
 
+
     def _fact_to_dict(self, fact) -> dict:
         if fact is None:
             return {}
@@ -172,6 +173,107 @@ class SlovnetService:
         # Старый формат Natasha: {"first": "Александр", "last": "Пушкин", ...}
         return {k: v for k, v in raw.items() if v is not None}
 
+    def _process_sentences_chunk(
+            self,
+            sentences: list,  # List[Tuple[str, int]]: [(sent_text, global_offset), ...]
+            output_format: str = "conllu",
+    ) -> Union[list, dict]:
+        """
+        Общая логика обработки списка предложений с глобальными офсетами.
+        Вызывается из parse_text и parse_sentence_chunk.
+        """
+        from natasha import Doc
+        from razdel import tokenize
+
+        results_conllu: list = []
+        native_sentences: list = []
+        native_spans: list = []
+
+        for sent_text, sent_start in sentences:
+            razdel_toks = list(tokenize(sent_text))
+            words = [t.text for t in razdel_toks]
+            if not words:
+                continue
+
+            morph_map: dict = {}
+            if self.morph:
+                for i, m_tok in enumerate(self.morph(words).tokens, start=1):
+                    morph_map[i] = m_tok
+
+            syntax_markup = self.syntax(words)
+            sent_conllu: list = []
+            sent_native: list = []
+
+            for i, tok in enumerate(syntax_markup.tokens):
+                r_tok = razdel_toks[i]
+                start_c = sent_start + r_tok.start
+                end_c = sent_start + r_tok.stop
+                tok_id = self._local_id(tok.id) or (i + 1)
+                head_id = self._local_id(tok.head_id)
+                if head_id == tok_id:
+                    head_id = 0
+                rel = getattr(tok, "rel", None) or "_"
+                pos = "_"
+                feats_obj = None
+                if tok_id in morph_map:
+                    m = morph_map[tok_id]
+                    pos = getattr(m, "pos", None) or "_"
+                    feats_obj = getattr(m, "feats", None)
+
+                if output_format == "conllu":
+                    sent_conllu.append({
+                        "id": tok_id, "form": tok.text, "lemma": "_",
+                        "upos": pos, "xpos": "_",
+                        "feats": self._feats_to_conllu(feats_obj),
+                        "head": head_id, "deprel": rel,
+                        "deps": "_", "misc": "_",
+                        "startchar": start_c, "endchar": end_c,
+                    })
+                else:
+                    sent_native.append({
+                        "id": tok_id, "text": tok.text,
+                        "pos": pos if pos != "_" else None,
+                        "feats": (dict(feats_obj.items())
+                                  if feats_obj and hasattr(feats_obj, "items") else None),
+                        "head_id": tok.head_id,
+                        "rel": rel if rel != "_" else None,
+                        "start": start_c, "stop": end_c,
+                    })
+
+            if output_format == "conllu":
+                results_conllu.append(sent_conllu)
+            else:
+                native_sentences.append(sent_native)  # ← список предложений, не плоский список
+
+            # NER только для native
+            if output_format == "native":
+                try:
+                    doc = Doc(sent_text)
+                    doc.segment(self.segmenter)
+                    doc.tag_morph(self.morph_tagger)
+                    doc.parse_syntax(self.syntax_parser)
+                    doc.tag_ner(self.ner_tagger)
+                    for span in doc.spans:
+                        span.normalize(self.morph_vocab)
+                    for span in doc.spans:
+                        if span.type == self.PER:
+                            span.extract_fact(self.names_extractor)
+                    for span in doc.spans:
+                        sp: dict = {
+                            "start": sent_start + span.start,
+                            "stop": sent_start + span.stop,
+                            "type": span.type,
+                        }
+                        if getattr(span, "text", None): sp["text"] = span.text
+                        if getattr(span, "normal", None): sp["normal"] = span.normal
+                        if getattr(span, "fact", None): sp["fact"] = self._fact_to_dict(span.fact)
+                        native_spans.append(sp)
+                except Exception as e:
+                    self.logger.warning(f"NER failed for '{sent_text[:30]}': {e}")
+
+        return (results_conllu if output_format == "conllu"
+                else {"sentences": native_sentences, "spans": native_spans})
+
     # ──────────────────────────────────────────────────────────
     # Публичный Modal-метод
     # ──────────────────────────────────────────────────────────
@@ -197,117 +299,135 @@ class SlovnetService:
         conllu → List[List[Dict]]
         native → Dict{"tokens": [...], "spans": [...]}
         """
-        from natasha import Doc
-        from razdel import sentenize, tokenize
+        # from natasha import Doc
+        # from razdel import sentenize, tokenize
+
+        from razdel import sentenize
 
         if not text or not text.strip():
             return [] if output_format == "conllu" else {"tokens": [], "spans": []}
 
-        results_conllu: list = []
-        native_tokens:  list = []
-        native_spans:   list = []
+        sentences = [(s.text, s.start) for s in sentenize(text)]
+        return self._process_sentences_chunk(sentences, output_format)
 
-        for sent in sentenize(text):
-            razdel_toks = list(tokenize(sent.text))
-            words = [t.text for t in razdel_toks]
-            if not words:
-                continue
+        # results_conllu: list = []
+        # native_tokens:  list = []
+        # native_spans:   list = []
+        #
+        # for sent in sentenize(text):
+        #     razdel_toks = list(tokenize(sent.text))
+        #     words = [t.text for t in razdel_toks]
+        #     if not words:
+        #         continue
+        #
+        #     # ── Морфология ────────────────────────────────────
+        #     morph_map: dict = {}
+        #     if self.morph:
+        #         for i, m_tok in enumerate(self.morph(words).tokens, start=1):
+        #             morph_map[i] = m_tok
+        #
+        #     # ── Синтаксис ─────────────────────────────────────
+        #     syntax_markup = self.syntax(words)
+        #
+        #     sent_conllu: list = []
+        #     for i, tok in enumerate(syntax_markup.tokens):
+        #         r_tok   = razdel_toks[i]
+        #         # Глобальные символьные смещения в исходном тексте
+        #         start_c = sent.start + r_tok.start
+        #         end_c   = sent.start + r_tok.stop
+        #
+        #         tok_id  = self._local_id(tok.id) or (i + 1)
+        #         head_id = self._local_id(tok.head_id)
+        #         if head_id == tok_id:       # защита от self-loop
+        #             head_id = 0
+        #         rel = getattr(tok, "rel", None) or "_"
+        #
+        #         pos       = "_"
+        #         feats_obj = None
+        #         if tok_id in morph_map:
+        #             m         = morph_map[tok_id]
+        #             pos       = getattr(m, "pos", None) or "_"
+        #             feats_obj = getattr(m, "feats", None)
+        #
+        #         if output_format == "conllu":
+        #             sent_conllu.append({
+        #                 "id":        tok_id,
+        #                 "form":      tok.text,
+        #                 "lemma":     "_",
+        #                 "upos":      pos,
+        #                 "xpos":      "_",
+        #                 "feats":     self._feats_to_conllu(feats_obj),
+        #                 "head":      head_id,
+        #                 "deprel":    rel,
+        #                 "deps":      "_",
+        #                 "misc":      "_",
+        #                 # Два поля ниже в стандарт не входят, но оставляем как намеренное расширение стандарта
+        #                 "startchar": start_c,
+        #                 "endchar":   end_c,
+        #             })
+        #         else:  # native
+        #             native_tokens.append({
+        #                 "id":      tok_id,
+        #                 "text":    tok.text,
+        #                 "pos":     pos if pos != "_" else None,
+        #                 "feats":   (dict(feats_obj.items())
+        #                             if feats_obj and hasattr(feats_obj, "items")
+        #                             else None),
+        #                 "head_id": tok.head_id,   # строка, как в оригинале Slovnet
+        #                 "rel":     rel if rel != "_" else None,
+        #                 # Два расширения ниже не являются нативными, т.к. Slovnet наследует
+        #                 # из razdel разбиение на токены и представленные числа - вычисленные начало и конец токена
+        #                 "start":   start_c,
+        #                 "stop":    end_c,
+        #             })
+        #
+        #     # ── NER (Natasha) — только для native ─────────────
+        #     # span.start / span.stop у Natasha — символьные смещения в sent.text,
+        #     # добавляем sent.start для получения глобальных смещений.
+        #     if output_format == "native":
+        #         try:
+        #             doc = Doc(sent.text)
+        #             doc.segment(self.segmenter)
+        #             doc.tag_morph(self.morph_tagger)
+        #             doc.parse_syntax(self.syntax_parser)
+        #             doc.tag_ner(self.ner_tagger)
+        #             for span in doc.spans:
+        #                 span.normalize(self.morph_vocab)
+        #             for span in doc.spans:
+        #                 if span.type == self.PER:
+        #                     span.extract_fact(self.names_extractor)
+        #             for span in doc.spans:
+        #                 sp: dict = {
+        #                     "start": sent.start + span.start,
+        #                     "stop":  sent.start + span.stop,
+        #                     "type":  span.type,
+        #                 }
+        #                 if getattr(span, "text",   None): sp["text"]   = span.text
+        #                 if getattr(span, "normal", None): sp["normal"] = span.normal
+        #                 if getattr(span, "fact",   None):
+        #                     sp["fact"] = self._fact_to_dict(span.fact)
+        #                 native_spans.append(sp)
+        #         except Exception as e:
+        #             self.logger.warning(f"NER failed for sentence '{sent.text[:30]}': {e}")
+        #
+        #     if output_format == "conllu":
+        #         results_conllu.append(sent_conllu)
+        #
+        # return (results_conllu if output_format == "conllu"
+        #         else {"tokens": native_tokens, "spans": native_spans})
 
-            # ── Морфология ────────────────────────────────────
-            morph_map: dict = {}
-            if self.morph:
-                for i, m_tok in enumerate(self.morph(words).tokens, start=1):
-                    morph_map[i] = m_tok
-
-            # ── Синтаксис ─────────────────────────────────────
-            syntax_markup = self.syntax(words)
-
-            sent_conllu: list = []
-            for i, tok in enumerate(syntax_markup.tokens):
-                r_tok   = razdel_toks[i]
-                # Глобальные символьные смещения в исходном тексте
-                start_c = sent.start + r_tok.start
-                end_c   = sent.start + r_tok.stop
-
-                tok_id  = self._local_id(tok.id) or (i + 1)
-                head_id = self._local_id(tok.head_id)
-                if head_id == tok_id:       # защита от self-loop
-                    head_id = 0
-                rel = getattr(tok, "rel", None) or "_"
-
-                pos       = "_"
-                feats_obj = None
-                if tok_id in morph_map:
-                    m         = morph_map[tok_id]
-                    pos       = getattr(m, "pos", None) or "_"
-                    feats_obj = getattr(m, "feats", None)
-
-                if output_format == "conllu":
-                    sent_conllu.append({
-                        "id":        tok_id,
-                        "form":      tok.text,
-                        "lemma":     "_",
-                        "upos":      pos,
-                        "xpos":      "_",
-                        "feats":     self._feats_to_conllu(feats_obj),
-                        "head":      head_id,
-                        "deprel":    rel,
-                        "deps":      "_",
-                        "misc":      "_",
-                        # Два поля ниже в стандарт не входят, но оставляем как намеренное расширение стандарта
-                        "startchar": start_c,
-                        "endchar":   end_c,
-                    })
-                else:  # native
-                    native_tokens.append({
-                        "id":      tok_id,
-                        "text":    tok.text,
-                        "pos":     pos if pos != "_" else None,
-                        "feats":   (dict(feats_obj.items())
-                                    if feats_obj and hasattr(feats_obj, "items")
-                                    else None),
-                        "head_id": tok.head_id,   # строка, как в оригинале Slovnet
-                        "rel":     rel if rel != "_" else None,
-                        # Два расширения ниже не являются нативными, т.к. Slovnet наследует
-                        # из razdel разбиение на токены и представленные числа - вычисленные начало и конец токена
-                        "start":   start_c,
-                        "stop":    end_c,
-                    })
-
-            # ── NER (Natasha) — только для native ─────────────
-            # span.start / span.stop у Natasha — символьные смещения в sent.text,
-            # добавляем sent.start для получения глобальных смещений.
-            if output_format == "native":
-                try:
-                    doc = Doc(sent.text)
-                    doc.segment(self.segmenter)
-                    doc.tag_morph(self.morph_tagger)
-                    doc.parse_syntax(self.syntax_parser)
-                    doc.tag_ner(self.ner_tagger)
-                    for span in doc.spans:
-                        span.normalize(self.morph_vocab)
-                    for span in doc.spans:
-                        if span.type == self.PER:
-                            span.extract_fact(self.names_extractor)
-                    for span in doc.spans:
-                        sp: dict = {
-                            "start": sent.start + span.start,
-                            "stop":  sent.start + span.stop,
-                            "type":  span.type,
-                        }
-                        if getattr(span, "text",   None): sp["text"]   = span.text
-                        if getattr(span, "normal", None): sp["normal"] = span.normal
-                        if getattr(span, "fact",   None):
-                            sp["fact"] = self._fact_to_dict(span.fact)
-                        native_spans.append(sp)
-                except Exception as e:
-                    self.logger.warning(f"NER failed for sentence '{sent.text[:30]}': {e}")
-
-            if output_format == "conllu":
-                results_conllu.append(sent_conllu)
-
-        return (results_conllu if output_format == "conllu"
-                else {"tokens": native_tokens, "spans": native_spans})
+    @modal.method()
+    def parse_sentence_chunk(
+            self,
+            sentences: list,  # List[Tuple[str, int]]
+            output_format: str = "conllu",
+    ) -> Union[list, dict]:
+        """
+        Обрабатывает один чанк предложений с глобальными офсетами.
+        Вызывается из SlovnetParser.parse_text через .map().
+        sentences: [(sent_text, start_char_in_original_text), ...]
+        """
+        return self._process_sentences_chunk(sentences, output_format)
 
 
 # ─────────────────────────────────────────────────────────────

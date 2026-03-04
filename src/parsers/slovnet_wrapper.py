@@ -10,7 +10,8 @@ Slovnet Wrapper — клиент для SlovnetService на Modal.
 """
 
 import logging
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Tuple, Union
+from razdel import sentenize
 
 import modal
 
@@ -36,12 +37,73 @@ class SlovnetParser:
             f"SlovnetParser подключён к Modal-приложению '{APP_NAME}'."
         )
 
+        # ── Разбивка текста на чанки предложений ──────────────────────────
+    @staticmethod
+    def _split_to_chunks(
+            text: str,
+            chunk_size: int,
+            base_offset: int = 0,
+    ) -> List[List[Tuple[str, int]]]:
+        """
+        Разбивает текст на чанки по chunk_size предложений.
+        Возвращает List[List[(sent_text, global_start_offset)]].
+        base_offset — смещение text в исходном документе (для parse_batch).
+        """
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
+        sentences = list(sentenize(text))
+        return [
+            [(s.text, base_offset + s.start) for s in sentences[i:i + chunk_size]]
+            for i in range(0, len(sentences), chunk_size)
+        ]
+
+    # ── Склейка результатов чанков ────────────────────────────────────
+    @staticmethod
+    def _merge_chunks(
+            chunk_results: list,
+            output_format: str,
+    ) -> Union[List[List[Dict]], Dict]:
+        if output_format == "conllu":
+            # каждый чанк — List[List[Dict]], склеиваем в один List[List[Dict]]
+            return [sent for cr in chunk_results for sent in cr]
+        # native: каждый чанк — {"sentences": [...], "spans": [...]}
+        return {
+            "sentences": [sent for cr in chunk_results for sent in cr["sentences"]],
+            "spans": [span for cr in chunk_results for span in cr["spans"]],
+        }
+
+    # def parse_text(
+    #     self,
+    #     text: str,
+    #     output_format: str = "conllu",
+    # ) -> Union[List[List[Dict[str, Any]]], Dict[str, Any]]:
+    #     return self._service.parse_text.remote(text, output_format=output_format)
+
+    # ── Публичный API ─────────────────────────────────────────────────
     def parse_text(
         self,
         text: str,
         output_format: str = "conllu",
+        chunk_size: int = 32,
     ) -> Union[List[List[Dict[str, Any]]], Dict[str, Any]]:
-        return self._service.parse_text.remote(text, output_format=output_format)
+        chunks = self._split_to_chunks(text, chunk_size)
+        if not chunks:
+            return [] if output_format == "conllu" else {"sentences": [], "spans": []}
+
+        if len(chunks) == 1:
+            result = self._service.parse_sentence_chunk.remote(
+                chunks[0], output_format=output_format
+            )
+            return self._merge_chunks([result], output_format)
+
+        # Несколько чанков → Modal распределяет по контейнерам
+        chunk_results = list(
+            self._service.parse_sentence_chunk.map(
+                chunks,
+                kwargs={"output_format": output_format},
+            )
+        )
+        return self._merge_chunks(chunk_results, output_format)
 
 # ─────────────────────────────────────────────────────────────
 # Точка входа — тестовые примеры
