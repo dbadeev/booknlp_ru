@@ -10,7 +10,7 @@ Slovnet Modal Service для booknlp_ru.
              head, deprel, deps, misc,
              startchar, endchar                    ← символьные смещения
 
-  output_format="native"  →  Dict{"tokens": [...], "spans": [...]}
+output_format="native" → Dict{"sentences": [[...], [...]], "spans": [...]}
       Ключи токена: id, text, pos, feats (dict|None),
                     head_id (str), rel,
                     start, stop                    ← символьные смещения
@@ -285,7 +285,7 @@ class SlovnetService:
         self,
         text: str,
         output_format: str = "conllu",
-    ) -> Union[list, dict]:
+    ) -> Union[List[List[Dict[str, Any]]], Dict[str, Any]]:
         """
         Парсинг текста.
 
@@ -318,7 +318,9 @@ class SlovnetService:
         """
         Обрабатывает один чанк предложений с глобальными офсетами.
         Вызывается из SlovnetParser.parse_text через .map().
-        sentences: [(sent_text, start_char_in_original_text), ...]
+        Рекомендуемый размер чанка: 16–64 предложения (зависит от длины предложений
+        и дотупной RAM контейнера). По умолчанию в wrapper: chunk_size=32.
+        sentences: List[Tuple[str, int]] — чанк предложений с глобальными офсетами.
         """
         return self._process_sentences_chunk(sentences, output_format)
 
@@ -369,11 +371,17 @@ def test():
     spans = result_native["spans"]
     tokens = [t for sent in sentences for t in sent]  # плоский — только для display
     print(f"Предложений: {len(sentences)},  Токенов: {len(tokens)},  Spans (NER): {len(spans)}\n")
-    print(f"  {'ID':<4} {'TEXT':<14} {'POS':<7} {'HEAD_ID':<8} {'REL':<10} START  STOP")
-    print("  " + "-" * 66)
+    print(f"  {'ID':<4} {'TEXT':<14} {'POS':<7} {'FEATS':<46} "
+          f"{'HEAD_ID':<8} {'REL':<10} START  STOP")
+    print("  " + "-" * 108)
     for t in tokens:
+        if isinstance(t['feats'], dict):
+            feats_s = "|".join(f"{k}={v}" for k, v in sorted(t['feats'].items()))
+        else:
+            feats_s = str(t['feats']) if t['feats'] else "None"
+        feats_d = (feats_s[:44] + "..") if len(feats_s) > 46 else feats_s
         print(f"  {t['id']:<4} {t['text']:<14} {str(t['pos']):<7} "
-              f"{str(t['head_id']):<8} {str(t['rel']):<10} "
+              f"{feats_d:<46} {str(t['head_id']):<8} {str(t['rel']):<10} "
               f"{t['start']}  {t['stop']}")
 
     print(f"\nКлючи native-токена: {list(sentences[0][0].keys())}")

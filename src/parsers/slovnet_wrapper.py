@@ -20,7 +20,7 @@ import modal
 logger = logging.getLogger(__name__)
 
 APP_NAME      = "booknlp-ru-slovnet"
-METHOD_NAME   = "SlovnetService.parse_text"
+# METHOD_NAME   = "SlovnetService.parse_text"
 
 
 class SlovnetParser:
@@ -33,8 +33,8 @@ class SlovnetParser:
     def __init__(self):
         # Cls.from_name — ленивый метод, не обращается к серверу до первого вызова.
         # Требует задеплоенного приложения: modal deploy slovnet_modal.py
-        SlovnetService = modal.Cls.from_name(APP_NAME, "SlovnetService")
-        self._service = SlovnetService()
+        _service_cls = modal.Cls.from_name(APP_NAME, "SlovnetService")
+        self._service = _service_cls()
         logger.info(
             f"SlovnetParser подключён к Modal-приложению '{APP_NAME}'."
         )
@@ -110,14 +110,14 @@ if __name__ == "__main__":
                         format="%(asctime)s %(levelname)s %(message)s")
 
     parser = SlovnetParser()
-    TEST_TEXT = "Александр Сергеевич Пушкин родился в Москве в 1799 году."
-    SEP = "=" * 70
+    test_text = "Александр Сергеевич Пушкин родился в Москве в 1799 году."
+    sep = "=" * 70
 
     # ════════════════════════════════════════════
     # 1. CoNLL-U
     # ════════════════════════════════════════════
-    print(f"\n{SEP}\nРЕЖИМ: conllu → List[List[Dict]]\n{SEP}")
-    result_conllu = parser.parse_text(TEST_TEXT, output_format="conllu")
+    print(f"\n{sep}\nРЕЖИМ: conllu → List[List[Dict]]\n{sep}")
+    result_conllu = parser.parse_text(test_text, output_format="conllu")
     print(f"Предложений: {len(result_conllu)}\n")
 
     for s_idx, sent in enumerate(result_conllu, 1):
@@ -142,8 +142,8 @@ if __name__ == "__main__":
     # ════════════════════════════════════════════
     # 2. Native
     # ════════════════════════════════════════════
-    print(f"\n{SEP}\nРЕЖИМ: native → Dict{{'sentences': [...], 'spans': [...]}}\n{SEP}")
-    result_native = parser.parse_text(TEST_TEXT, output_format="native")
+    print(f"\n{sep}\nРЕЖИМ: native → Dict{{'sentences': [...], 'spans': [...]}}\n{sep}")
+    result_native = parser.parse_text(test_text, output_format="native")
     sentences = result_native["sentences"]  # ← было "tokens"
     spans = result_native["spans"]
     tokens = [t for sent in sentences for t in sent]  # плоский — только для display
@@ -190,7 +190,7 @@ if __name__ == "__main__":
     # ════════════════════════════════════════════
     # 3. Сравнение ключей и feats
     # ════════════════════════════════════════════
-    print(f"\n{SEP}\nСРАВНЕНИЕ КЛЮЧЕЙ И ФОРМАТА FEATS\n{SEP}")
+    print(f"\n{sep}\nСРАВНЕНИЕ КЛЮЧЕЙ И ФОРМАТА FEATS\n{sep}")
     ck = set(result_conllu[0][0].keys())
     nk = set(sentences[0][0].keys())  # ← было tokens[0]
     print(f"  Только в conllu: {sorted(ck - nk)}")
