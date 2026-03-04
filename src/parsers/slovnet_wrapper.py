@@ -13,6 +13,8 @@ import logging
 from typing import Any, Dict, List, Tuple, Union
 from razdel import sentenize
 
+import pandas as pd
+
 import modal
 
 logger = logging.getLogger(__name__)
@@ -60,9 +62,9 @@ class SlovnetParser:
     # ── Склейка результатов чанков ────────────────────────────────────
     @staticmethod
     def _merge_chunks(
-            chunk_results: list,
+            chunk_results: List[Union[List[List[Dict[str, Any]]], Dict[str, Any]]],
             output_format: str,
-    ) -> Union[List[List[Dict]], Dict]:
+    ) -> Union[List[List[Dict[str, Any]]], Dict[str, Any]]:
         if output_format == "conllu":
             # каждый чанк — List[List[Dict]], склеиваем в один List[List[Dict]]
             return [sent for cr in chunk_results for sent in cr]
@@ -71,13 +73,6 @@ class SlovnetParser:
             "sentences": [sent for cr in chunk_results for sent in cr["sentences"]],
             "spans": [span for cr in chunk_results for span in cr["spans"]],
         }
-
-    # def parse_text(
-    #     self,
-    #     text: str,
-    #     output_format: str = "conllu",
-    # ) -> Union[List[List[Dict[str, Any]]], Dict[str, Any]]:
-    #     return self._service.parse_text.remote(text, output_format=output_format)
 
     # ── Публичный API ─────────────────────────────────────────────────
     def parse_text(
@@ -121,8 +116,6 @@ if __name__ == "__main__":
     # ════════════════════════════════════════════
     # 1. CoNLL-U
     # ════════════════════════════════════════════
-    import pandas as pd
-
     print(f"\n{SEP}\nРЕЖИМ: conllu → List[List[Dict]]\n{SEP}")
     result_conllu = parser.parse_text(TEST_TEXT, output_format="conllu")
     print(f"Предложений: {len(result_conllu)}\n")
