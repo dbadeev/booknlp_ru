@@ -56,7 +56,7 @@ class SlovnetParser:
         all_sents = list(sentenize(text))
         return [
             [(s.text, base_offset + s.start) for s in all_sents[i:i + chunk_size]]
-            for i in range(0, len(sentences), chunk_size)
+            for i in range(0, len(all_sents), chunk_size)
         ]
 
     # ── Склейка результатов чанков ────────────────────────────────────

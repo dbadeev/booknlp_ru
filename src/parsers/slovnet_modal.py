@@ -59,22 +59,6 @@ app = modal.App("booknlp-ru-slovnet")
 
 @app.cls(image=image, timeout=600, cpu=2.0)
 class SlovnetService:
-    def __init__(self):
-        # Атрибуты инициализируются в @modal.enter() (setup).
-        # Заглушки для PyCharm — Modal не вызывает __init__.
-        self.logger = None
-        self.navec = None
-        self.syntax = None
-        self.morph = None
-        self.segmenter = None
-        self.morph_vocab = None
-        self.emb = None
-        self.morph_tagger = None
-        self.syntax_parser = None
-        self.ner_tagger = None
-        self.names_extractor = None
-        self.PER = None
-
     @modal.enter()
     def setup(self):
         from pathlib import Path
