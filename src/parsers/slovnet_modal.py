@@ -305,7 +305,7 @@ class SlovnetService:
         from razdel import sentenize
 
         if not text or not text.strip():
-            return [] if output_format == "conllu" else {"tokens": [], "spans": []}
+            return [] if output_format == "conllu" else {"sentences": [], "spans": []}
 
         sentences = [(s.text, s.start) for s in sentenize(text)]
         return self._process_sentences_chunk(sentences, output_format)
@@ -451,13 +451,17 @@ def test():
     print(f"Предложений: {len(result_conllu)}\n")
     for s_idx, sent in enumerate(result_conllu, 1):
         print(f"  Предложение {s_idx}:")
-        print(f"  {'ID':<4} {'FORM':<14} {'UPOS':<7} {'FEATS':<36} "
-              f"{'HEAD':<5} {'DEPREL':<10} START  END")
-        print("  " + "-" * 92)
+        print(f"  {'ID':>4} {'FORM':<16} {'LEMMA':<12} {'UPOS':<8} {'XPOS':<6} "
+              f"{'HEAD':>5} {'DEPREL':<14} {'DEPS':<6} {'MISC':<10} START  END")
+        print("  " + "-" * 105)
         for t in sent:
-            feats_d = (t["feats"][:34] + "..") if len(t["feats"]) > 36 else t["feats"]
-            print(f"  {t['id']:<4} {t['form']:<14} {t['upos']:<7} {feats_d:<36} "
-                  f"{t['head']:<5} {t['deprel']:<10} {t['startchar']}  {t['endchar']}")
+            print(f"  {t['id']:>4} {t['form']:<16} {t['lemma']:<12} "
+                  f"{t['upos']:<8} {(t['xpos'] or '_'):<6} "
+                  f"{t['head']:>5} {t['deprel']:<14} "
+                  f"{(t['deps'] or '_'):<6} {(t['misc'] or '_'):<10} "
+                  f"{t['startchar']}  {t['endchar']}")
+            print(f"       feats: {t['feats'] or '_'}")
+        print()
 
     print(f"\nКлючи conllu-токена: {list(result_conllu[0][0].keys())}")
     print("\nJSON первого токена:")
@@ -466,12 +470,12 @@ def test():
     # ════════════════════════════════════════════
     # 2. Native
     # ════════════════════════════════════════════
-    print(f"\n{SEP}\nРЕЖИМ: native  →  Dict{{'tokens': [...], 'spans': [...]}}\n{SEP}")
+    print(f"\n{SEP}\nРЕЖИМ: native → Dict{{'sentences': [...], 'spans': [...]}}\n{SEP}")
     result_native = service.parse_text.remote(TEST_TEXT, output_format="native")
-    tokens = result_native["tokens"]
-    spans  = result_native["spans"]
-
-    print(f"Токенов: {len(tokens)},  Spans (NER): {len(spans)}\n")
+    sentences = result_native["sentences"]  # список предложений
+    spans = result_native["spans"]
+    tokens = [t for sent in sentences for t in sent]  # плоский — только для display
+    print(f"Предложений: {len(sentences)},  Токенов: {len(tokens)},  Spans (NER): {len(spans)}\n")
     print(f"  {'ID':<4} {'TEXT':<14} {'POS':<7} {'HEAD_ID':<8} {'REL':<10} START  STOP")
     print("  " + "-" * 66)
     for t in tokens:
@@ -479,9 +483,9 @@ def test():
               f"{str(t['head_id']):<8} {str(t['rel']):<10} "
               f"{t['start']}  {t['stop']}")
 
-    print(f"\nКлючи native-токена: {list(tokens[0].keys())}")
+    print(f"\nКлючи native-токена: {list(sentences[0][0].keys())}")
     print("\nJSON первого токена:")
-    print(json.dumps(tokens[0], ensure_ascii=False, indent=2, default=str))
+    print(json.dumps(sentences[0][0], ensure_ascii=False, indent=2, default=str))
 
     if spans:
         print(f"\nSpans ({len(spans)}):")
@@ -500,7 +504,7 @@ def test():
     # ════════════════════════════════════════════
     print(f"\n{SEP}\nСРАВНЕНИЕ КЛЮЧЕЙ И ФОРМАТА FEATS\n{SEP}")
     ck = set(result_conllu[0][0].keys())
-    nk = set(tokens[0].keys())
+    nk = set(sentences[0][0].keys())
     print(f"  Только в conllu: {sorted(ck - nk)}")
     print(f"  Только в native: {sorted(nk - ck)}")
     print(f"\n  conllu feats (строка CoNLL-U): {repr(result_conllu[0][0]['feats'])}")
