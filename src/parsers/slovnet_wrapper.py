@@ -121,54 +121,62 @@ if __name__ == "__main__":
     # ════════════════════════════════════════════
     # 1. CoNLL-U
     # ════════════════════════════════════════════
-    print(f"\n{SEP}\nРЕЖИМ: conllu  →  List[List[Dict]]\n{SEP}")
+    import pandas as pd
+
+    print(f"\n{SEP}\nРЕЖИМ: conllu → List[List[Dict]]\n{SEP}")
     result_conllu = parser.parse_text(TEST_TEXT, output_format="conllu")
     print(f"Предложений: {len(result_conllu)}\n")
+
     for s_idx, sent in enumerate(result_conllu, 1):
         print(f"  Предложение {s_idx}:")
-        print(f"  {'ID':<4} {'FORM':<14} {'UPOS':<7} {'FEATS':<36} "
-              f"{'HEAD':<5} {'DEPREL':<10} START  END")
-        print("  " + "-" * 92)
-        for t in sent:
-            feats_d = (t["feats"][:34] + "..") if len(t["feats"]) > 36 else t["feats"]
-            print(f"  {t['id']:<4} {t['form']:<14} {t['upos']:<7} {feats_d:<36} "
-                  f"{t['head']:<5} {t['deprel']:<10} {t['startchar']}  {t['endchar']}")
+        df = pd.DataFrame(sent)
+        # Стандартные CoNLL-U поля + символьные офсеты
+        cols = ["id", "form", "lemma", "upos", "xpos",
+                "head", "deprel", "deps", "misc", "startchar", "endchar"]
+        available = [c for c in cols if c in df.columns]
+        print(df[available].to_string(index=False))
+        print(f"\n  {'─' * 70}")
+        print(f"  Morphological features (feats):")
+        print(f"  {'─' * 70}")
+        if "feats" in df.columns:
+            print(df[["form", "feats"]].to_string(index=False))
+        print()
 
     print(f"\nКлючи conllu-токена: {list(result_conllu[0][0].keys())}")
     print("\nJSON первого токена:")
     print(json.dumps(result_conllu[0][0], ensure_ascii=False, indent=2))
+
     # ════════════════════════════════════════════
     # 2. Native
     # ════════════════════════════════════════════
-    print(f"\n{SEP}\nРЕЖИМ: native  →  Dict{{'tokens': [...], 'spans': [...]}}\n{SEP}")
+    print(f"\n{SEP}\nРЕЖИМ: native → Dict{{'sentences': [...], 'spans': [...]}}\n{SEP}")
     result_native = parser.parse_text(TEST_TEXT, output_format="native")
-    tokens = result_native["tokens"]
-    spans  = result_native["spans"]
+    sentences = result_native["sentences"]  # ← было "tokens"
+    spans = result_native["spans"]
+    tokens = [t for sent in sentences for t in sent]  # плоский — только для display
 
-    print(f"Токенов: {len(tokens)},  Spans (NER): {len(spans)}\n")
+    print(f"Предложений: {len(sentences)},  Токенов: {len(tokens)},  Spans (NER): {len(spans)}\n")
 
-    # ── Таблица токенов: все поля ──────────────────────────────
+    # ── Таблица токенов: все поля ────────────────────────────────────────
     print(f"  {'ID':<4} {'TEXT':<14} {'POS':<7} {'FEATS':<46} "
           f"{'HEAD_ID':<8} {'REL':<12} {'START':<6} STOP")
     print("  " + "-" * 110)
     for t in tokens:
-        # feats — словарь или None → строка K=V|K=V
         if isinstance(t["feats"], dict):
             feats_s = "|".join(f"{k}={v}" for k, v in sorted(t["feats"].items()))
         else:
             feats_s = str(t["feats"]) if t["feats"] else "None"
         feats_d = (feats_s[:44] + "..") if len(feats_s) > 46 else feats_s
-
         print(f"  {t['id']:<4} {t['text']:<14} {str(t['pos']):<7} "
               f"{feats_d:<46} {str(t['head_id']):<8} {str(t['rel']):<12} "
               f"{t['start']:<6} {t['stop']}")
 
-    # ── JSON-дамп первых двух токенов целиком ─────────────────
-    print(f"\nКлючи native-токена: {list(tokens[0].keys())}")
+    # ── JSON-дамп первых двух токенов целиком ───────────────────────────
+    print(f"\nКлючи native-токена: {list(sentences[0][0].keys())}")  # ← было tokens[0]
     print("\nJSON первых двух токенов (все поля):")
     print(json.dumps(tokens[:2], ensure_ascii=False, indent=2, default=str))
 
-    # ── Spans: все поля ───────────────────────────────────────
+    # ── Spans: все поля ──────────────────────────────────────────────────
     if spans:
         print(f"\nSpans ({len(spans)}):")
         for sp in spans:
@@ -181,7 +189,6 @@ if __name__ == "__main__":
                     print(f"      {k:<8} = '{v}'")
             else:
                 print(f"    fact   = None")
-        # JSON-дамп первого span целиком
         print(f"\nJSON первого span (все поля):")
         print(json.dumps(spans[0], ensure_ascii=False, indent=2, default=str))
     else:
@@ -192,8 +199,8 @@ if __name__ == "__main__":
     # ════════════════════════════════════════════
     print(f"\n{SEP}\nСРАВНЕНИЕ КЛЮЧЕЙ И ФОРМАТА FEATS\n{SEP}")
     ck = set(result_conllu[0][0].keys())
-    nk = set(tokens[0].keys())
+    nk = set(sentences[0][0].keys())  # ← было tokens[0]
     print(f"  Только в conllu: {sorted(ck - nk)}")
     print(f"  Только в native: {sorted(nk - ck)}")
     print(f"\n  conllu feats (строка CoNLL-U): {repr(result_conllu[0][0]['feats'])}")
-    print(f"  native feats (dict|None):       {repr(tokens[0]['feats'])}")
+    print(f"  native feats (dict|None):       {repr(sentences[0][0]['feats'])}")
