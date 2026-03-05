@@ -215,6 +215,7 @@ class SpacyService:
     @staticmethod
     def _format_conllu(doc) -> str:
         """CoNLL-U через spacy-conll (doc._.conll_str заполняется в pipeline)."""
+        # noinspection PyProtectedMember
         return doc._.conll_str  # type: ignore[attr-defined]
 
     # ─── Production methods: принимают pre-split чанки из wrapper ────────────
@@ -248,6 +249,7 @@ class SpacyService:
         docs = self._run_pipeline_batch(docs, batch_size=len(docs))
 
         if output_format == "conllu":
+            # noinspection PyProtectedMember
             return "\n\n".join(
                 doc._.conll_str.strip() for doc in docs  # type: ignore[attr-defined]
             ) + "\n"
@@ -280,6 +282,7 @@ class SpacyService:
         docs = self._run_pipeline_batch(docs, batch_size=len(docs))
 
         if output_format == "conllu":
+            # noinspection PyProtectedMember
             return "\n\n".join(
                 doc._.conll_str.strip() for doc in docs  # type: ignore[attr-defined]
             ) + "\n"

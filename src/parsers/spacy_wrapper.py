@@ -39,7 +39,7 @@ import logging
 import sys
 import modal
 from razdel import sentenize
-from typing import Any, Dict, List, Literal, Tuple,TypedDict, Union
+from typing import Any, Dict, List, Literal, Tuple,TypedDict, Union, cast
 
 OutputFormat  = Literal["native", "conllu"]
 TokenizerType = Literal["internal", "razdel"]
@@ -406,11 +406,13 @@ if __name__ == "__main__":
     )
     print(f"\nТекст: '{text_single}'")
     for sentence in result_ni:
+        sentence: SentenceDict
         print(f"\nПредложение: '{sentence['text']}' "
               f"(chars {sentence['start_char']}:{sentence['end_char']})")
         if sentence.get("entities"):
             print(f"  Сущности: {[(e['text'], e['label']) for e in sentence['entities']]}")
         for token in sentence["words"]:
+            token: TokenDict
             _print_token_full(token)
 
     # ── Вариант 2: NATIVE + RAZDEL ────────────────────────────────────────
@@ -422,9 +424,12 @@ if __name__ == "__main__":
         chunk_size=args.chunk_size
     )
     print(f"\n⚡ Сравнение токенизаторов: '{text_single}'")
-    print(f"  internal: {[w['form'] for s in result_ni for w in s['words']]}")
-    print(f"  razdel:   {[w['form'] for s in result_nr for w in s['words']]}")
+    native_sents = cast(List[Dict[str, Any]], result_ni)
+    razdel_sents = cast(List[Dict[str, Any]], result_nr)
+    print(f"  internal: {[w['form'] for s in native_sents for w in s['words']]}")
+    print(f"  razdel:   {[w['form'] for s in razdel_sents for w in s['words']]}")
     for sentence in result_nr:
+        sentence: SentenceDict
         print(f"\nПредложение: '{sentence['text']}' "
               f"(chars {sentence['start_char']}:{sentence['end_char']})")
         for token in sentence["words"]:
