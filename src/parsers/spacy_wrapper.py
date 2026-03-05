@@ -39,13 +39,56 @@ import logging
 import sys
 import modal
 from razdel import sentenize
-from typing import Any, Dict, List, Literal, Tuple, Union
+from typing import Any, Dict, List, Literal, Tuple,TypedDict, Union
 
 OutputFormat  = Literal["native", "conllu"]
 TokenizerType = Literal["internal", "razdel"]
 
-DEFAULT_CHUNK_SIZE: int = 32  # предложений на чанк; подбирается под GPU и тип текста
+default_chunk_size: int = 32  # предложений на чанк; подбирается под GPU и тип текста
 
+# ─── Типы для аннотаций токенов (подавляют предупреждения IDE) ────────────
+class TokenDict(TypedDict, total=False):
+    id: int
+    start_char: int
+    end_char: int
+    form: str
+    norm: str
+    lower: str
+    shape: str
+    lemma: str
+    upos: str
+    xpos: str
+    feats: str
+    head: int
+    deprel: str
+    n_lefts: int
+    n_rights: int
+    children: List[int]
+    ent_type: str
+    ent_iob: str
+    is_sent_start: bool
+    whitespace: str
+    misc: str
+    is_alpha: bool
+    is_digit: bool
+    is_punct: bool
+    is_space: bool
+    is_stop: bool
+    is_oov: bool
+    like_num: bool
+    like_url: bool
+    like_email: bool
+    has_vector: bool
+    cluster: int
+    vector_norm: float
+
+
+class SentenceDict(TypedDict, total=False):
+    text: str
+    start_char: int
+    end_char: int
+    words: List[TokenDict]
+    entities: List[Dict[str, Any]]
 
 # ─── SpacyParser ─────────────────────────────────────────────────────────────
 
@@ -68,8 +111,8 @@ class SpacyParser:
                 "booknlp-ru-spacy", "SpacyService"
             )()
             self.logger.info("✓ Connected to SpaCy via Modal.")
-        except Exception as e:
-            self.logger.error(f"❌ Failed to connect to Modal: {e}")
+        except Exception as exc:
+            self.logger.error(f"❌ Failed to connect to Modal: {exc}")
             raise
 
     # ─── Chunking ─────────────────────────────────────────────────────────
@@ -140,7 +183,7 @@ class SpacyParser:
         text: str,
         output_format: OutputFormat = "native",
         tokenizer: TokenizerType = "internal",
-        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        chunk_size: int = default_chunk_size,
     ) -> Union[List[Dict[str, Any]], str]:
         """
         Парсит текст через SpaCy в Modal.
@@ -156,7 +199,7 @@ class SpacyParser:
             output_format: 'native' | 'conllu'
             tokenizer:     'internal' | 'razdel'
             chunk_size:    Предложений на чанк (подбирается под GPU).
-                           По умолчанию DEFAULT_CHUNK_SIZE = 32.
+                           По умолчанию default_chunk_size = 32.
         Returns:
             native → List[Dict]
             conllu → str
@@ -190,8 +233,8 @@ class SpacyParser:
                 ))
                 return self._merge_chunks(chunk_results, output_format)
 
-        except Exception as e:
-            self.logger.error(f"❌ Error during spaCy parsing: {e}")
+        except Exception as exc:
+            self.logger.error(f"❌ Error during spaCy parsing: {exc}")
             raise
 
     def parse_batch(
@@ -199,7 +242,7 @@ class SpacyParser:
         texts: List[str],
         output_format: OutputFormat = "native",
         tokenizer: TokenizerType = "internal",
-        chunk_size: int = DEFAULT_CHUNK_SIZE,
+        chunk_size: int = default_chunk_size,
     ) -> List[Union[List[Dict[str, Any]], str]]:
         """
         Разбивает все тексты на чанки и отправляет их единым .map() —
@@ -249,14 +292,14 @@ class SpacyParser:
                 offset += n_chunks
             return results
 
-        except Exception as e:
-            self.logger.error(f"❌ Error during batch parsing: {e}")
+        except Exception as exc:
+            self.logger.error(f"❌ Error during batch parsing: {exc}")
             raise
 
 
 # ─── Вспомогательная функция вывода ─────────────────────────────────────────
 
-def _print_token_full(tok: Dict[str, Any]) -> None:
+def _print_token_full(tok: TokenDict) -> None:
     """Выводит все поля токена в нативном формате spaCy."""
     print(f"\n  ── Токен #{tok['id']}: '{tok['form']}' " + "─" * 30)
     print(f"  ПОЗИЦИЯ:")
@@ -300,6 +343,14 @@ def _print_token_full(tok: Dict[str, Any]) -> None:
     vn = tok.get("vector_norm")
     print(f"    vector_norm:   {vn if vn is not None else '—'}")
 
+    # ─── Константа заголовка CoNLL-U ──────────────────────────────────────────
+conllu_header = "# ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
+
+def _print_conllu(text: str, conllu: str) -> None:
+    """Выводит CoNLL-U блок с текстом предложения и заголовком столбцов."""
+    print(f"\n# text = {text}")
+    print(conllu_header)
+    print(conllu)
 
 # ─── __main__: тест через wrapper (с chunking) ───────────────────────────────
 
@@ -319,16 +370,16 @@ if __name__ == "__main__":
         dest="output_format", help="Формат вывода (default: native)"
     )
     ap.add_argument(
-        "--chunk-size", type=int, default=DEFAULT_CHUNK_SIZE, dest="chunk_size",
-        help=f"Предложений на чанк (default: {DEFAULT_CHUNK_SIZE})"
+        "--chunk-size", type=int, default=default_chunk_size, dest="chunk_size",
+        help=f"Предложений на чанк (default: {default_chunk_size})"
     )
     args = ap.parse_args()
 
-    SEP = "=" * 72
+    sep = "=" * 72
 
-    print(SEP)
+    print(sep)
     print("ПРОВЕРКА ДОСТУПНОСТИ MODAL-СЕРВИСА")
-    print(SEP)
+    print(sep)
 
     try:
         parser = SpacyParser()
@@ -346,26 +397,26 @@ if __name__ == "__main__":
     )
 
     # ── Вариант 1: NATIVE + INTERNAL ──────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("ВАРИАНТ 1: NATIVE + INTERNAL TOKENIZER")
-    print(SEP)
+    print(sep)
     result_ni = parser.parse_text(
         text_single, output_format="native", tokenizer="internal",
         chunk_size=args.chunk_size
     )
     print(f"\nТекст: '{text_single}'")
-    for sent in result_ni:
-        print(f"\nПредложение: '{sent['text']}' "
-              f"(chars {sent['start_char']}:{sent['end_char']})")
-        if sent.get("entities"):
-            print(f"  Сущности: {[(e['text'], e['label']) for e in sent['entities']]}")
-        for tok in sent["words"]:
-            _print_token_full(tok)
+    for sentence in result_ni:
+        print(f"\nПредложение: '{sentence['text']}' "
+              f"(chars {sentence['start_char']}:{sentence['end_char']})")
+        if sentence.get("entities"):
+            print(f"  Сущности: {[(e['text'], e['label']) for e in sentence['entities']]}")
+        for token in sentence["words"]:
+            _print_token_full(token)
 
     # ── Вариант 2: NATIVE + RAZDEL ────────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("ВАРИАНТ 2: NATIVE + RAZDEL TOKENIZER")
-    print(SEP)
+    print(sep)
     result_nr = parser.parse_text(
         text_single, output_format="native", tokenizer="razdel",
         chunk_size=args.chunk_size
@@ -373,43 +424,47 @@ if __name__ == "__main__":
     print(f"\n⚡ Сравнение токенизаторов: '{text_single}'")
     print(f"  internal: {[w['form'] for s in result_ni for w in s['words']]}")
     print(f"  razdel:   {[w['form'] for s in result_nr for w in s['words']]}")
-    for sent in result_nr:
-        print(f"\nПредложение: '{sent['text']}' "
-              f"(chars {sent['start_char']}:{sent['end_char']})")
-        for tok in sent["words"]:
-            _print_token_full(tok)
+    for sentence in result_nr:
+        print(f"\nПредложение: '{sentence['text']}' "
+              f"(chars {sentence['start_char']}:{sentence['end_char']})")
+        for token in sentence["words"]:
+            _print_token_full(token)
 
     # ── Вариант 3: CONLL-U + INTERNAL ─────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("ВАРИАНТ 3: CONLL-U + INTERNAL TOKENIZER")
-    print(SEP)
-    print(f"\nТекст: '{text_multi}'")
-    print(parser.parse_text(
-        text_multi, output_format="conllu", tokenizer="internal",
-        chunk_size=args.chunk_size
-    ))
+    print(sep)
+    _print_conllu(
+        text_multi,
+        parser.parse_text(
+            text_multi, output_format="conllu", tokenizer="internal",
+            chunk_size=args.chunk_size
+        )
+    )
 
     # ── Вариант 4: CONLL-U + RAZDEL ───────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("ВАРИАНТ 4: CONLL-U + RAZDEL TOKENIZER")
-    print(SEP)
-    print(f"\nТекст: '{text_multi}'")
-    print(parser.parse_text(
-        text_multi, output_format="conllu", tokenizer="razdel",
-        chunk_size=args.chunk_size
-    ))
+    print(sep)
+    _print_conllu(
+        text_multi,
+        parser.parse_text(
+            text_multi, output_format="conllu", tokenizer="razdel",
+            chunk_size=args.chunk_size
+        )
+    )
 
     # ── parse_batch ────────────────────────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("BATCH: CONLL-U + RAZDEL (2 текста)")
-    print(SEP)
+    print(sep)
     batch_texts = [text_single, "Зло, которым пугаешь, не так зло."]
     batch_results = parser.parse_batch(
         batch_texts, output_format="conllu", tokenizer="razdel",
         chunk_size=args.chunk_size
     )
-    for i, (text, res) in enumerate(zip(batch_texts, batch_results), 1):
-        print(f"\n── Текст {i}: '{text}'")
-        print(res)
+    for idx, (batch_text, batch_res) in enumerate(zip(batch_texts, batch_results), 1):
+        print(f"\n── Текст {idx}: '{batch_text}'")
+        _print_conllu(batch_text, batch_res)
 
     print(f"\n{'✅ ВСЕ ТЕСТЫ ЗАВЕРШЕНЫ':^72}")

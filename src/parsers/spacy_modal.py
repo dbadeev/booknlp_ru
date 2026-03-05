@@ -127,7 +127,8 @@ class SpacyService:
                 docs = [pipe(doc) for doc in docs]
         return docs
 
-    def _format_native(self, doc, char_offset: int = 0) -> List[Dict[str, Any]]:
+    @staticmethod
+    def _format_native(doc, char_offset: int = 0) -> List[Dict[str, Any]]:
         """
         Полный нативный формат spaCy — все атрибуты токена.
 
@@ -211,9 +212,10 @@ class SpacyService:
             result.append(sent_data)
         return result
 
-    def _format_conllu(self, doc) -> str:
+    @staticmethod
+    def _format_conllu(doc) -> str:
         """CoNLL-U через spacy-conll (doc._.conll_str заполняется в pipeline)."""
-        return doc._.conll_str
+        return doc._.conll_str  # type: ignore[attr-defined]
 
     # ─── Production methods: принимают pre-split чанки из wrapper ────────────
 
@@ -247,7 +249,7 @@ class SpacyService:
 
         if output_format == "conllu":
             return "\n\n".join(
-                doc._.conll_str.strip() for doc in docs
+                doc._.conll_str.strip() for doc in docs  # type: ignore[attr-defined]
             ) + "\n"
 
         result = []
@@ -279,7 +281,7 @@ class SpacyService:
 
         if output_format == "conllu":
             return "\n\n".join(
-                doc._.conll_str.strip() for doc in docs
+                doc._.conll_str.strip() for doc in docs  # type: ignore[attr-defined]
             ) + "\n"
 
         result = []
@@ -365,6 +367,14 @@ def _print_token_full(tok: Dict[str, Any]) -> None:
     vn = tok.get("vector_norm")
     print(f"    vector_norm:   {vn if vn is not None else '—'}")
 
+    # ─── Константа заголовка CoNLL-U ──────────────────────────────────────────
+conllu_header = "# ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
+
+def _print_conllu(text: str, conllu: str) -> None:
+    """Выводит CoNLL-U блок с текстом предложения и заголовком столбцов."""
+    print(f"\n# text = {text}")
+    print(conllu_header)
+    print(conllu)
 
 # ─── local_entrypoint: тест Modal-сервиса напрямую ───────────────────────────
 
@@ -382,12 +392,12 @@ def main():
     text_single = "Кружка-термос стоит 500р."
     text_multi  = "Зло, которым пугаешь, не так зло. Москва — столица России."
 
-    SEP = "=" * 72
+    sep = "=" * 72
 
     # ── 1. NATIVE + INTERNAL ──────────────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("1. NATIVE + INTERNAL (parse.remote)")
-    print(SEP)
+    print(sep)
     result = service.parse.remote(text_single, output_format="native", tokenizer="internal")
     for sent in result:
         print(f"\nПредложение: '{sent['text']}'")
@@ -395,9 +405,9 @@ def main():
             _print_token_full(tok)
 
     # ── 2. NATIVE + RAZDEL ───────────────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("2. NATIVE + RAZDEL (parse.remote)")
-    print(SEP)
+    print(sep)
     result_r = service.parse.remote(text_single, output_format="native", tokenizer="razdel")
     print(f"\n⚡ Сравнение токенизаторов для: '{text_single}'")
     print(f"  internal: {[w['form'] for s in result   for w in s['words']]}")
@@ -408,31 +418,37 @@ def main():
             _print_token_full(tok)
 
     # ── 3. CONLL-U + INTERNAL ─────────────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("3. CONLL-U + INTERNAL (parse.remote)")
-    print(SEP)
-    print(service.parse.remote(text_multi, output_format="conllu", tokenizer="internal"))
+    print(sep)
+    result_conllu_i = service.parse.remote(
+        text_multi, output_format="conllu", tokenizer="internal"
+    )
+    _print_conllu(text_multi, result_conllu_i)
 
     # ── 4. CONLL-U + RAZDEL ──────────────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("4. CONLL-U + RAZDEL (parse.remote)")
-    print(SEP)
-    print(service.parse.remote(text_multi, output_format="conllu", tokenizer="razdel"))
+    print(sep)
+    result_conllu_r = service.parse.remote(
+        text_multi, output_format="conllu", tokenizer="razdel"
+    )
+    _print_conllu(text_multi, result_conllu_r)
 
     # ── 5. parse_sentence_chunk — razdel path (production method) ─────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("5. parse_sentence_chunk (razdel path, pre-split chunk)")
-    print(SEP)
+    print(sep)
     sentences = list(sentenize(text_multi))
     chunk = [(s.text, s.start) for s in sentences]
     print(f"Чанк ({len(chunk)} предложений): {[c[0] for c in chunk]}")
     result_chunk = service.parse_sentence_chunk.remote(chunk, output_format="conllu")
-    print(result_chunk)
+    _print_conllu(" | ".join(c[0] for c in chunk), result_chunk)
 
     # ── 6. parse_sentence_chunk_native — internal path (production method) ─
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("6. parse_sentence_chunk_native (internal path, pre-split chunk)")
-    print(SEP)
+    print(sep)
     chunk_texts = [s.text for s in sentences]
     print(f"Чанк ({len(chunk_texts)} предложений): {chunk_texts}")
     result_chunk_native = service.parse_sentence_chunk_native.remote(
