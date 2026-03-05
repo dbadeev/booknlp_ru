@@ -53,7 +53,6 @@ class SpacyService:
     @modal.enter()
     def setup(self):
         import spacy
-        from spacy.tokens import Doc
         from razdel import tokenize as razdel_tokenize
 
         logging.basicConfig(level=logging.INFO)
@@ -67,7 +66,8 @@ class SpacyService:
             def __init__(self, vocab):
                 self.vocab = vocab
 
-            def __call__(self, text: str) -> Doc:
+            def __call__(self, text: str):
+                from spacy.tokens import Doc
                 tokens = list(razdel_tokenize(text))
                 if not tokens:
                     return Doc(self.vocab, words=[], spaces=[])
@@ -117,15 +117,16 @@ class SpacyService:
         Компоненты с .pipe() (tok2vec) обрабатываются GPU-батчами,
         остальные — поодиночке.
         """
+        current_docs: list = list(docs)
         for _, pipe in self.nlp.pipeline:
             if hasattr(pipe, "pipe"):
                 try:
-                    docs = list(pipe.pipe(docs, batch_size=batch_size))
+                    current_docs = list(pipe.pipe(current_docs, batch_size=batch_size))
                 except TypeError:
-                    docs = list(pipe.pipe(docs))
+                    current_docs = list(pipe.pipe(current_docs))
             else:
-                docs = [pipe(doc) for doc in docs]
-        return docs
+                current_docs = [pipe(doc) for doc in current_docs]
+        return current_docs
 
     @staticmethod
     def _format_native(doc, char_offset: int = 0) -> List[Dict[str, Any]]:
@@ -162,7 +163,7 @@ class SpacyService:
                     "lemma": token.lemma_,
                     "upos":  token.pos_,
                     "xpos":  token.tag_,
-                    "feats": str(token.morph) if token.morph else "_",
+                    "feats": str(token.morph) if token.morph.to_dict() else "_",
                     # ── Синтаксис ─────────────────────────────────────────
                     "head":     (token.head.i - sent_token_offset + 1
                                  if token.head.i != token.i else 0),
@@ -225,6 +226,7 @@ class SpacyService:
         self,
         sentences_with_offsets: List[Tuple[str, int]],
         output_format: str = "native",
+        batch_size: int = 32,
     ) -> Any:
         """
         Razdel path.
@@ -236,6 +238,7 @@ class SpacyService:
         Args:
             sentences_with_offsets: List[(sentence_text, start_char)]
             output_format: 'native' | 'conllu'
+            batch_size: int
         Returns:
             native → List[Dict]
             conllu → str
@@ -246,7 +249,7 @@ class SpacyService:
             docs.append(self._make_doc(sent_text, "razdel"))
             char_offsets.append(char_offset)
 
-        docs = self._run_pipeline_batch(docs, batch_size=len(docs))
+        docs = self._run_pipeline_batch(docs, batch_size=batch_size)
 
         if output_format == "conllu":
             # noinspection PyProtectedMember
@@ -264,6 +267,7 @@ class SpacyService:
         self,
         sentences: List[str],
         output_format: str = "native",
+        batch_size: int = 32,
     ) -> Any:
         """
         Internal/native path.
@@ -274,12 +278,13 @@ class SpacyService:
         Args:
             sentences:     List[str] — тексты предложений чанка
             output_format: 'native' | 'conllu'
+            batch_size: int
         Returns:
             native → List[Dict]
             conllu → str
         """
         docs = [self._make_doc(s, "internal") for s in sentences]
-        docs = self._run_pipeline_batch(docs, batch_size=len(docs))
+        docs = self._run_pipeline_batch(docs, batch_size=batch_size)
 
         if output_format == "conllu":
             # noinspection PyProtectedMember
@@ -371,12 +376,12 @@ def _print_token_full(tok: Dict[str, Any]) -> None:
     print(f"    vector_norm:   {vn if vn is not None else '—'}")
 
     # ─── Константа заголовка CoNLL-U ──────────────────────────────────────────
-conllu_header = "# ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
+CONLLU_HEADER = "# ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
 
 def _print_conllu(text: str, conllu: str) -> None:
     """Выводит CoNLL-U блок с текстом предложения и заголовком столбцов."""
     print(f"\n# text = {text}")
-    print(conllu_header)
+    print(CONLLU_HEADER)
     print(conllu)
 
 # ─── local_entrypoint: тест Modal-сервиса напрямую ───────────────────────────

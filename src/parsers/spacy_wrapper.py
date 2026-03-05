@@ -171,9 +171,8 @@ class SpacyParser:
         conllu → str         (CoNLL-U блоки через двойной перенос строки)
         """
         if output_format == "conllu":
-            return "\n\n".join(
-                cr.strip() for cr in chunk_results if cr.strip()
-            ) + "\n"
+            parts = [cr.strip() for cr in chunk_results if cr.strip()]
+            return "\n\n".join(parts) + "\n" if parts else ""
         return [sent for cr in chunk_results for sent in cr]
 
     # ─── Public API ───────────────────────────────────────────────────────
@@ -210,10 +209,10 @@ class SpacyParser:
                 if not chunks:
                     return [] if output_format == "native" else ""
                 if len(chunks) == 1:
-                    result = self.service.parse_sentence_chunk.remote(
-                        chunks[0], output_format=output_format
-                    )
-                    return self._merge_chunks([result], output_format)
+                    if len(chunks) == 1:
+                        return self.service.parse_sentence_chunk.remote(
+                            chunks[0], output_format=output_format
+                        )
                 chunk_results = list(self.service.parse_sentence_chunk.map(
                     chunks, kwargs={"output_format": output_format}
                 ))
@@ -224,10 +223,9 @@ class SpacyParser:
                 if not chunks:
                     return [] if output_format == "native" else ""
                 if len(chunks) == 1:
-                    result = self.service.parse_sentence_chunk_native.remote(
+                    return self.service.parse_sentence_chunk_native.remote(
                         chunks[0], output_format=output_format
                     )
-                    return self._merge_chunks([result], output_format)
                 chunk_results = list(self.service.parse_sentence_chunk_native.map(
                     chunks, kwargs={"output_format": output_format}
                 ))
@@ -344,12 +342,12 @@ def _print_token_full(tok: TokenDict) -> None:
     print(f"    vector_norm:   {vn if vn is not None else '—'}")
 
     # ─── Константа заголовка CoNLL-U ──────────────────────────────────────────
-conllu_header = "# ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
+CONLLU_HEADER = "# ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
 
 def _print_conllu(text: str, conllu: str) -> None:
     """Выводит CoNLL-U блок с текстом предложения и заголовком столбцов."""
     print(f"\n# text = {text}")
-    print(conllu_header)
+    print(CONLLU_HEADER)
     print(conllu)
 
 # ─── __main__: тест через wrapper (с chunking) ───────────────────────────────
