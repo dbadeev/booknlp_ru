@@ -451,7 +451,8 @@ def main():
     chunk = [(s.text, s.start) for s in sentences]
     print(f"Чанк ({len(chunk)} предложений): {[c[0] for c in chunk]}")
     result_chunk = service.parse_sentence_chunk.remote(chunk, output_format="conllu")
-    _print_conllu(" | ".join(c[0] for c in chunk), result_chunk)
+    print(f"\n{CONLLU_HEADER}")
+    print(result_chunk)
 
     # ── 6. parse_sentence_chunk_native — internal path (production method) ─
     print(f"\n{sep}")
@@ -467,5 +468,7 @@ def main():
               f"(chars {sent['start_char']}:{sent['end_char']})")
         if sent.get("entities"):
             print(f"  Сущности: {[(e['text'], e['label']) for e in sent['entities']]}")
+        for tok in sent["words"]:
+            _print_token_full(tok)
 
     print(f"\n{'✅ Тестирование завершено!':^72}")
