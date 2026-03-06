@@ -209,10 +209,9 @@ class SpacyParser:
                 if not chunks:
                     return [] if output_format == "native" else ""
                 if len(chunks) == 1:
-                    if len(chunks) == 1:
-                        return self.service.parse_sentence_chunk.remote(
-                            chunks[0], output_format=output_format
-                        )
+                    return self.service.parse_sentence_chunk.remote(
+                        chunks[0], output_format=output_format
+                    )
                 chunk_results = list(self.service.parse_sentence_chunk.map(
                     chunks, kwargs={"output_format": output_format}
                 ))
