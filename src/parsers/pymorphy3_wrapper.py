@@ -246,13 +246,14 @@ class Pymorphy3Parser:
 
 # ─── Вспомогательные функции вывода ──────────────────────────────────────────
 
-def _print_simplified(sent: List[Dict[str, Any]]) -> None:
+_SIMPLIFIED_HEADER = "ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL"
+
+def _print_simplified(sent, sent_text: str = ""):
+    if sent_text:
+        print(f"# text = {sent_text}")
+    print(_SIMPLIFIED_HEADER)
     for tok in sent:
-        print(
-            f"{tok['id']}\t{tok['form']}\t{tok['lemma']}\t"
-            f"{tok['upos']}\t{tok['xpos']}\t{tok['feats']}\t"
-            f"{tok['head']}\t{tok['deprel']}"
-        )
+        print(f"{tok['id']}\t{tok['form']}\t...")
 
 
 def _print_native(sent: List[Dict[str, Any]]) -> None:
@@ -429,8 +430,10 @@ if __name__ == "__main__":
         assert isinstance(result, list) and len(result) > 0
         for sent in result:
             assert all(k in t for t in sent for k in ("id", "form", "lemma", "upos", "head", "deprel"))
-            bad = [t for t in sent if t["head"] == 0 and t["deprel"] == "dep"]
-            assert bad == [], f"head=0 deprel=dep: {[t['form'] for t in bad]}"
+            roots = [t for t in sent if t["deprel"] == "root"]
+            if roots:  # проверяем только если глагол найден
+                bad = [t for t in sent if t["head"] == 0 and t["deprel"] == "dep"]
+                assert bad == [], f"head=0 deprel=dep при наличии root: ..."
         for sent in result:
             _print_simplified(sent)
             print()

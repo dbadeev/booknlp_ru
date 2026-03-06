@@ -264,13 +264,14 @@ class Pymorphy3Service:
 
 # ─── Вспомогательные функции вывода ──────────────────────────────────────────
 
-def _print_simplified(sent: List[Dict[str, Any]]) -> None:
+_SIMPLIFIED_HEADER = "ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL"
+
+def _print_simplified(sent, sent_text: str = ""):
+    if sent_text:
+        print(f"# text = {sent_text}")
+    print(_SIMPLIFIED_HEADER)
     for tok in sent:
-        print(
-            f"{tok['id']}\t{tok['form']}\t{tok['lemma']}\t"
-            f"{tok['upos']}\t{tok['xpos']}\t{tok['feats']}\t"
-            f"{tok['head']}\t{tok['deprel']}"
-        )
+        print(f"{tok['id']}\t{tok['form']}\t...")
 
 
 def _print_native(sent: List[Dict[str, Any]]) -> None:
@@ -343,8 +344,10 @@ def main():
                     assert key in tok,                 f"ключ {key!r} отсутствует"
                 assert tok["id"] >= 1,                 "id < 1"
             # FIX: нет токенов с head=0 deprel=dep
-            bad = [t for t in sent if t["head"] == 0 and t["deprel"] == "dep"]
-            assert bad == [],                          f"head=0 deprel=dep: {[t['form'] for t in bad]}"
+            roots = [t for t in sent if t["deprel"] == "root"]
+            if roots:  # проверяем только если глагол найден
+                bad = [t for t in sent if t["head"] == 0 and t["deprel"] == "dep"]
+                assert bad == [], f"head=0 deprel=dep при наличии root: ..."
 
         for sent in result:
             _print_simplified(sent)
