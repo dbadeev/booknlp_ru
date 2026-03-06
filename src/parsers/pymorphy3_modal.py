@@ -376,9 +376,9 @@ def main():
                 bad = [t for t in sent if t["head"] == 0 and t["deprel"] == "dep"]
                 assert bad == [], f"head=0 deprel=dep при наличии root: ..."
 
-        for sent in result:
-            for sent, (sent_text, _) in zip(result, chunk):
-                print_simplified(sent, sent_text)
+        for sent, (sent_text, _) in zip(result, chunk):
+            print_simplified(sent, sent_text)
+            print()
         ok("parse_sentence_chunk / simplified — структура и офсеты корректны")
     except Exception as e:
         fail("parse_sentence_chunk / simplified", e)
@@ -423,9 +423,9 @@ def main():
             for tok in sent:
                 assert "form" in tok and "upos" in tok
 
-        for sent in result:
-            for sent, (sent_text, _) in zip(result, chunk):
-                print_simplified(sent, sent_text)
+        for sent, sent_text in zip(result, chunk_texts):
+            print_simplified(sent, sent_text)
+            print()
         ok("parse_sentence_chunk_native / simplified — структура корректна")
     except Exception as e:
         fail("parse_sentence_chunk_native / simplified", e)

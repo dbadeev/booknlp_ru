@@ -399,10 +399,10 @@ if __name__ == "__main__":
             if roots:  # проверяем только если глагол найден
                 bad = [t for t in sent if t["head"] == 0 and t["deprel"] == "dep"]
                 assert bad == [], f"head=0 deprel=dep при наличии root: ..."
-        for sent in result:
-            sentences = list(sentenize(TEXT))
-            for sent, s in zip(result, sentences):
-                print_simplified(sent, s.text)
+        sentences = list(sentenize(TEXT))
+        for sent, s in zip(result, sentences):
+            print_simplified(sent, s.text)
+            print()
         ok("[2] parse_text razdel/simplified")
     except Exception as e:
         fail("[2] parse_text razdel/simplified", e)
@@ -433,10 +433,10 @@ if __name__ == "__main__":
         result = parser.parse_text(TEXT, output_format="simplified",
                                    tokenizer="native", chunk_size=args.chunk_size)
         assert isinstance(result, list) and len(result) > 0
-        for sent in result:
-            sentences = list(sentenize(TEXT))
-            for sent, s in zip(result, sentences):
-                _print_simplified(sent, s.text)
+        sentences = list(sentenize(TEXT))
+        for sent, s in zip(result, sentences):
+            print_simplified(sent, s.text)
+            print()
         ok("[4] parse_text native/simplified")
     except Exception as e:
         fail("[4] parse_text native/simplified", e)
@@ -497,9 +497,9 @@ if __name__ == "__main__":
         for idx, (text, res) in enumerate(zip(BATCH, results), 1):
             assert isinstance(res, list), f"текст {idx}: результат не list"
             print(f"  Текст {idx}: {len(res)} предл.")
-            sentences = list(sentenize(TEXT))
-            for sent, s in zip(result, sentences):
-                _print_simplified(sent, s.text)
+            sentences = list(sentenize(text))  # ← text из цикла
+            for sent, s in zip(res, sentences):  # ← res вместо result
+                print_simplified(sent, s.text)
             print()
         ok(f"[8] parse_batch razdel/simplified — {len(BATCH)} текста")
     except Exception as e:
