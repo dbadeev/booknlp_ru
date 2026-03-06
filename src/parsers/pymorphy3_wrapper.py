@@ -253,7 +253,17 @@ def _print_simplified(sent, sent_text: str = ""):
         print(f"# text = {sent_text}")
     print(_SIMPLIFIED_HEADER)
     for tok in sent:
-        print(f"{tok['id']}\t{tok['form']}\t...")
+        fields = [
+            str(tok["id"]),
+            tok["form"],
+            tok["lemma"],
+            tok["upos"],
+            tok["xpos"],
+            tok["feats"],
+            str(tok["head"]),
+            tok["deprel"],
+        ]
+        print("\t".join(fields))
 
 
 def _print_native(sent: List[Dict[str, Any]]) -> None:

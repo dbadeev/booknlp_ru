@@ -56,15 +56,32 @@ _SCONJ_SET: set = {
 def _tag_to_feats(tag) -> str:
     """Конвертирует OpenCorpora тег в CoNLL-U FEATS строку."""
     mapping = {
+        # Case
         "nomn": "Case=Nom", "gent": "Case=Gen", "datv": "Case=Dat",
         "accs": "Case=Acc", "ablt": "Case=Ins", "loct": "Case=Loc",
+        "voct": "Case=Voc",
+        # Number
         "sing": "Number=Sing", "plur": "Number=Plur",
+        # Gender
         "masc": "Gender=Masc", "femn": "Gender=Fem", "neut": "Gender=Neut",
-        "past": "Tense=Past",  "pres": "Tense=Pres", "futr": "Tense=Fut",
-        "indc": "Mood=Ind",    "impr": "Mood=Imp",
+        # Tense
+        "past": "Tense=Past", "pres": "Tense=Pres", "futr": "Tense=Fut",
+        # Mood
+        "indc": "Mood=Ind", "impr": "Mood=Imp",
+        # Aspect
         "perf": "Aspect=Perf", "impf": "Aspect=Imp",
+        # Person
+        "1per": "Person=1", "2per": "Person=2", "3per": "Person=3",
+        # Animacy
+        "anim": "Animacy=Anim", "inan": "Animacy=Inan",
+        # Voice
+        "actv": "Voice=Act", "pssv": "Voice=Pass",
+        # Variant
+        "Shrt": "Variant=Short",
+        # Abbr
+        "Abbr": "Abbr=Yes",
     }
-    grammemes = {g.lower() for g in tag.grammemes}
+    grammemes = set(tag.grammemes)
     feats = sorted(v for k, v in mapping.items() if k in grammemes)
     return "|".join(feats) if feats else "_"
 
@@ -271,7 +288,17 @@ def _print_simplified(sent, sent_text: str = ""):
         print(f"# text = {sent_text}")
     print(_SIMPLIFIED_HEADER)
     for tok in sent:
-        print(f"{tok['id']}\t{tok['form']}\t...")
+        fields = [
+            str(tok["id"]),
+            tok["form"],
+            tok["lemma"],
+            tok["upos"],
+            tok["xpos"],
+            tok["feats"],
+            str(tok["head"]),
+            tok["deprel"],
+        ]
+        print("\t".join(fields))
 
 
 def _print_native(sent: List[Dict[str, Any]]) -> None:
