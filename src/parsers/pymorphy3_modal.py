@@ -267,6 +267,9 @@ class Pymorphy3Service:
     ) -> List[List[Dict[str, Any]]]:
         """Парсит текст целиком. Для local_entrypoint и прямых вызовов."""
         from razdel import sentenize
+        if output_format not in ("simplified", "native"):
+            raise ValueError(f"Unknown output_format: {output_format!r}")
+
         parse_fn = (
             self._parse_tokens_native if output_format == "native"
             else self._parse_tokens_simplified
@@ -277,43 +280,6 @@ class Pymorphy3Service:
             if tokens:
                 result.append(parse_fn(tokens))
         return result
-
-
-# ─── Вспомогательные функции вывода ──────────────────────────────────────────
-
-_SIMPLIFIED_HEADER = "ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL"
-
-def _print_simplified(sent, sent_text: str = ""):
-    if sent_text:
-        print(f"# text = {sent_text}")
-    print(_SIMPLIFIED_HEADER)
-    for tok in sent:
-        fields = [
-            str(tok["id"]),
-            tok["form"],
-            tok["lemma"],
-            tok["upos"],
-            tok["xpos"],
-            tok["feats"],
-            str(tok["head"]),
-            tok["deprel"],
-        ]
-        print("\t".join(fields))
-
-
-def _print_native(sent: List[Dict[str, Any]]) -> None:
-    for tok in sent:
-        print(f"ID: {tok['id']}")
-        print(f"  Word: {tok['word']}")
-        print(f"  Normal form: {tok['normal_form']}")
-        print(f"  Tag: {tok['tag']}")
-        print(f"  Score: {tok['score']}")
-        print(f"  Lexeme (forms): {tok['lexeme'][:3]}...")
-        print(f"  Methods stack: {tok['methods_stack']}")
-        print(f"  Is known: {tok['is_known']}")
-        print(f"  Normalized: {tok['normalized']}")
-        print()
-
 
 # ─── local_entrypoint ─────────────────────────────────────────────────────────
 
@@ -333,6 +299,40 @@ def main():
       [7] Неверный output_format — ValueError
     """
     from razdel import sentenize
+
+    # ─── Вспомогательные функции вывода ──────────────────────────────────────────
+
+    _HEADER = "ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL"
+
+    def print_simplified(sent, sent_text: str = ""):
+        if sent_text:
+            print(f"# text = {sent_text}")
+        print(_HEADER)
+        for tok in sent:
+            fields = [
+                str(tok["id"]),
+                tok["form"],
+                tok["lemma"],
+                tok["upos"],
+                tok["xpos"],
+                tok["feats"],
+                str(tok["head"]),
+                tok["deprel"],
+            ]
+            print("\t".join(fields))
+
+    def print_native(sent: List[Dict[str, Any]]) -> None:
+        for tok in sent:
+            print(f"ID: {tok['id']}")
+            print(f"  Word: {tok['word']}")
+            print(f"  Normal form: {tok['normal_form']}")
+            print(f"  Tag: {tok['tag']}")
+            print(f"  Score: {tok['score']}")
+            print(f"  Lexeme (forms): {tok['lexeme'][:3]}...")
+            print(f"  Methods stack: {tok['methods_stack']}")
+            print(f"  Is known: {tok['is_known']}")
+            print(f"  Normalized: {tok['normalized']}")
+            print()
 
     service = Pymorphy3Service()
     sep = "=" * 72
@@ -377,8 +377,8 @@ def main():
                 assert bad == [], f"head=0 deprel=dep при наличии root: ..."
 
         for sent in result:
-            _print_simplified(sent)
-            print()
+            for sent, (sent_text, _) in zip(result, chunk):
+                print_simplified(sent, sent_text)
         ok("parse_sentence_chunk / simplified — структура и офсеты корректны")
     except Exception as e:
         fail("parse_sentence_chunk / simplified", e)
@@ -403,7 +403,7 @@ def main():
                 assert isinstance(tok["is_known"], bool)
 
         for sent in result:
-            _print_native(sent)
+            print_native(sent)
         ok("parse_sentence_chunk / native — структура корректна")
     except Exception as e:
         fail("parse_sentence_chunk / native", e)
@@ -424,8 +424,8 @@ def main():
                 assert "form" in tok and "upos" in tok
 
         for sent in result:
-            _print_simplified(sent)
-            print()
+            for sent, (sent_text, _) in zip(result, chunk):
+                print_simplified(sent, sent_text)
         ok("parse_sentence_chunk_native / simplified — структура корректна")
     except Exception as e:
         fail("parse_sentence_chunk_native / simplified", e)
@@ -446,7 +446,7 @@ def main():
                 assert "word" in tok and "tag" in tok
 
         for sent in result:
-            _print_native(sent)
+            print_native(sent)
         ok("parse_sentence_chunk_native / native — структура корректна")
     except Exception as e:
         fail("parse_sentence_chunk_native / native", e)

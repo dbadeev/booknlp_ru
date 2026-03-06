@@ -157,10 +157,6 @@ class Pymorphy3Parser:
                 chunks = self._split_to_chunks(text, chunk_size)
                 if not chunks:
                     return []
-                if len(chunks) == 1:
-                    return self.service.parse_sentence_chunk.remote(
-                        chunks[0], output_format=output_format
-                    )
                 chunk_results = list(self.service.parse_sentence_chunk.map(
                     chunks, kwargs={"output_format": output_format}
                 ))
@@ -168,10 +164,6 @@ class Pymorphy3Parser:
                 chunks = self._split_to_sentence_chunks(text, chunk_size)
                 if not chunks:
                     return []
-                if len(chunks) == 1:
-                    return self.service.parse_sentence_chunk_native.remote(
-                        chunks[0], output_format=output_format
-                    )
                 chunk_results = list(self.service.parse_sentence_chunk_native.map(
                     chunks, kwargs={"output_format": output_format}
                 ))
@@ -242,43 +234,6 @@ class Pymorphy3Parser:
         except Exception as exc:
             self.logger.error(f"Error during batch parsing: {exc}")
             raise
-
-
-# ─── Вспомогательные функции вывода ──────────────────────────────────────────
-
-_SIMPLIFIED_HEADER = "ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL"
-
-def _print_simplified(sent, sent_text: str = ""):
-    if sent_text:
-        print(f"# text = {sent_text}")
-    print(_SIMPLIFIED_HEADER)
-    for tok in sent:
-        fields = [
-            str(tok["id"]),
-            tok["form"],
-            tok["lemma"],
-            tok["upos"],
-            tok["xpos"],
-            tok["feats"],
-            str(tok["head"]),
-            tok["deprel"],
-        ]
-        print("\t".join(fields))
-
-
-def _print_native(sent: List[Dict[str, Any]]) -> None:
-    for tok in sent:
-        print(f"ID: {tok['id']}")
-        print(f"  Word: {tok['word']}")
-        print(f"  Normal form: {tok['normal_form']}")
-        print(f"  Tag: {tok['tag']}")
-        print(f"  Score: {tok['score']}")
-        print(f"  Lexeme (forms): {tok['lexeme'][:3]}...")
-        print(f"  Methods stack: {tok['methods_stack']}")
-        print(f"  Is known: {tok['is_known']}")
-        print(f"  Normalized: {tok['normalized']}")
-        print()
-
 
 # ─── __main__ ─────────────────────────────────────────────────────────────────
 
@@ -445,8 +400,9 @@ if __name__ == "__main__":
                 bad = [t for t in sent if t["head"] == 0 and t["deprel"] == "dep"]
                 assert bad == [], f"head=0 deprel=dep при наличии root: ..."
         for sent in result:
-            _print_simplified(sent)
-            print()
+            sentences = list(sentenize(TEXT))
+            for sent, s in zip(result, sentences):
+                print_simplified(sent, s.text)
         ok("[2] parse_text razdel/simplified")
     except Exception as e:
         fail("[2] parse_text razdel/simplified", e)
@@ -478,8 +434,9 @@ if __name__ == "__main__":
                                    tokenizer="native", chunk_size=args.chunk_size)
         assert isinstance(result, list) and len(result) > 0
         for sent in result:
-            _print_simplified(sent)
-            print()
+            sentences = list(sentenize(TEXT))
+            for sent, s in zip(result, sentences):
+                _print_simplified(sent, s.text)
         ok("[4] parse_text native/simplified")
     except Exception as e:
         fail("[4] parse_text native/simplified", e)
@@ -540,8 +497,9 @@ if __name__ == "__main__":
         for idx, (text, res) in enumerate(zip(BATCH, results), 1):
             assert isinstance(res, list), f"текст {idx}: результат не list"
             print(f"  Текст {idx}: {len(res)} предл.")
-            for sent in res:
-                _print_simplified(sent)
+            sentences = list(sentenize(TEXT))
+            for sent, s in zip(result, sentences):
+                _print_simplified(sent, s.text)
             print()
         ok(f"[8] parse_batch razdel/simplified — {len(BATCH)} текста")
     except Exception as e:
