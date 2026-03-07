@@ -46,8 +46,8 @@ class CobaldParser:
                 "booknlp-ru-cobald", "CobaldService"
             )()
             self.logger.info("✓ Connected to CoBaLD via Modal.")
-        except Exception as e:
-            self.logger.error(f"❌ Failed to connect to Modal: {e}")
+        except Exception as e2:
+            self.logger.error(f"❌ Failed to connect to Modal: {e2}")
             raise
 
     def parse_text(
@@ -77,8 +77,8 @@ class CobaldParser:
                 self.logger.warning("Сервис вернул None.")
                 return []
             return result  # [] для пустого текста — корректный результат
-        except Exception as e:
-            self.logger.error(f"❌ Ошибка при разборе: {e}")
+        except Exception as e2:
+            self.logger.error(f"❌ Ошибка при разборе: {e2}")
             raise
 
     def parse_batch(
@@ -104,8 +104,8 @@ class CobaldParser:
                 )
                 results.extend(batch_result or [])
             return results
-        except Exception as e:
-            self.logger.error(f"❌ Ошибка при пакетной обработке: {e}")
+        except Exception as e2:
+            self.logger.error(f"❌ Ошибка при пакетной обработке: {e2}")
             raise
 
 
@@ -147,10 +147,10 @@ def _to_conllu_str(sentences: List[List[Dict[str, Any]]]) -> str:
     При dict-формате LEMMA/UPOS/XPOS/FEATS/DEPS будут '_'.
     """
     lines = []
-    for sent in sentences:
-        if not sent:
+    for snt in sentences:
+        if not snt:
             continue
-        for tok in sent:
+        for tok in snt:
             # ── MISC: объединяем оригинальный misc с CoBaLD-полями ──────────
             misc_parts = []
             raw_misc = (tok.get("misc") or "").strip()
@@ -185,12 +185,12 @@ def _to_conllu_str(sentences: List[List[Dict[str, Any]]]) -> str:
     return "\n".join(lines)
 
 
-def _print_sentence_table(sent: List[Dict]) -> None:
+def _print_sentence_table(sentence: List[Dict]) -> None:
     """Выводит токены предложения в виде таблицы."""
     print(f"  {'ID':<4} {'FORM':<16} {'HEAD':<5} {'DEPREL':<14} "
           f"{'DEEPSLOT':<14} {'SEMCLASS':<12} MISC")
     print("  " + "-" * 78)
-    for tok in sent:
+    for tok in sentence:
         print(f"  {tok['id']:<4} {tok['form']:<16} {tok['head']:<5} "
               f"{tok['deprel']:<14} {tok.get('deepslot', '—'):<14} "
               f"{tok.get('semclass', '—'):<12} {tok.get('misc', '—')}")

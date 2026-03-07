@@ -78,7 +78,8 @@ class CobaldService:
     # Оригинал дублировал идентичный блок в _format_native_output
     # и в dict-ветке parse_batch (~15 строк кода дважды).
     # ─────────────────────────────────────────────────────────
-    def _build_id_mapping(self, sentence_data: dict) -> Dict[str, int]:
+    @staticmethod
+    def _build_id_mapping(sentence_data: dict) -> Dict[str, int]:
         """
         Строит маппинг {внутренний_id_модели → порядковый_id_CoNLL-U}.
 
@@ -315,8 +316,8 @@ def main():
     test_single = "Мама мыла раму. Папа читал газету."
     test_batch  = ["Он думал о море.", "Кот лежал на диване."]
 
-    SEP = "=" * 70
-    print(f"{SEP}\nТЕСТИРОВАНИЕ COBALD SERVICE\n{SEP}")
+    sep = "=" * 70
+    print(f"{sep}\nТЕСТИРОВАНИЕ COBALD SERVICE\n{sep}")
 
     service = CobaldService()
 
