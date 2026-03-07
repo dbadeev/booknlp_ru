@@ -316,7 +316,7 @@ def main():
         print(_HEADER)
         for token in sentence:
             fields = [
-                str(tok["id"]),
+                str(token["id"]),
                 token["form"],
                 token["lemma"],
                 token["upos"],

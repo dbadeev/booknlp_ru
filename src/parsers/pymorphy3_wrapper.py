@@ -572,7 +572,7 @@ if __name__ == "__main__":
                     fs = [t["form"] for t in ss]
                     assert fb == fs, f"текст {i + 1}: forms differ: {fb} vs {fs}"
             ok(f"[10] parse_batch ≡ parse_text × {len(batch)}")
-            ok(f"[10] parse_batch ≡ parse_text × {len(batch)}")
+
         except Exception as e:
             fail("[10] parse_batch vs parse_text", e)
 
