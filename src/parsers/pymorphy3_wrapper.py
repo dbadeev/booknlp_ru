@@ -238,28 +238,6 @@ class Pymorphy3Parser:
 # ─── __main__ ─────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    """
-    Тестирует Pymorphy3Parser (wrapper + Modal).
-
-    Тест-секции:
-      [1] Chunking (локально, без Modal)
-          [1.1] _split_to_chunks: офсеты корректны
-          [1.2] _split_to_sentence_chunks: только строки, без офсетов
-          [1.3] Оба пути дают одинаковое число предложений
-          [1.4] _merge_chunks: склейка корректна
-          [1.5] Невалидный chunk_size → ValueError
-          [1.6] Невалидный output_format → ValueError
-          [1.7] Невалидный tokenizer → ValueError
-      [2] parse_text — razdel path, simplified
-      [3] parse_text — razdel path, native
-      [4] parse_text — native path, simplified
-      [5] parse_text — native path, native
-      [6] parse_text — chunk_size=1 (каждое предложение отдельный чанк)
-      [7] parse_text — пустой текст → []
-      [8] parse_batch — razdel path
-      [9] parse_batch — native path
-      [10] parse_batch — результат совпадает с parse_text по одному
-    """
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s  %(name)s  %(levelname)s  %(message)s",
@@ -274,6 +252,26 @@ if __name__ == "__main__":
     def _run_tests(args) -> None:
         """
         Тестирует Pymorphy3Parser (wrapper + Modal).
+
+
+        Тест-секции:
+          [1] Chunking (локально, без Modal)
+              [1.1] _split_to_chunks: офсеты корректны
+              [1.2] _split_to_sentence_chunks: только строки, без офсетов
+              [1.3] Оба пути дают одинаковое число предложений
+              [1.4] _merge_chunks: склейка корректна
+              [1.5] Невалидный chunk_size → ValueError
+              [1.6] Невалидный output_format → ValueError
+              [1.7] Невалидный tokenizer → ValueError
+          [2] parse_text — razdel path, simplified
+          [3] parse_text — razdel path, native
+          [4] parse_text — native path, simplified
+          [5] parse_text — native path, native
+          [6] parse_text — chunk_size=1 (каждое предложение отдельный чанк)
+          [7] parse_text — пустой текст → []
+          [8] parse_batch — razdel path
+          [9] parse_batch — native path
+          [10] parse_batch — результат совпадает с parse_text по одному
         ...
         """
 
@@ -529,9 +527,11 @@ if __name__ == "__main__":
                                          tokenizer="razdel", chunk_size=args.chunk_size)
             assert len(results) == len(BATCH), f"ожидалось {len(BATCH)}, получено {len(results)}"
             for idx, (text, res) in enumerate(zip(BATCH, results), 1):
+                print(f"  Текст {idx}: {len(res)} предл.")
                 sentences = list(sentenize(text))
                 for sent, s in zip(res, sentences):
                     print_simplified(sent, s.text)
+                print()
             ok(f"[8] parse_batch razdel/simplified — {len(BATCH)} текста")
         except Exception as e:
             fail("[8] parse_batch razdel", e)
