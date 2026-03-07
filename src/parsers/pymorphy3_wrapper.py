@@ -311,12 +311,12 @@ if __name__ == "__main__":
         failed = 0
 
         def ok(name: str):
-            global passed
+            nonlocal passed
             passed += 1
             print(f"  ✅  {name}")
 
         def fail(name: str, err):
-            global failed
+            nonlocal failed
             failed += 1
             print(f"  ❌  {name}: {err}")
 
