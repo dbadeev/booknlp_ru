@@ -56,6 +56,7 @@ class CobaldService:
         from src.cobald_parser.pipeline import ConlluTokenClassificationPipeline
         from razdel import tokenize as razdel_tokenize, sentenize
 
+        self.sentenize = sentenize
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
         # Модель грузится с HuggingFace Hub, не из volume
@@ -114,50 +115,80 @@ class CobaldService:
     # Теперь оба публичных метода вызывают _parse_batch_impl напрямую.
     # ─────────────────────────────────────────────────────────
     def _parse_batch_impl(
-        self,
-        texts: List[str],
-        output_format: str = "dict",
+            self,
+            texts: List[str],
+            output_format: str = "dict",
     ) -> List[List[Any]]:
-        """
-        Внутренняя реализация: разбирает список текстов.
-
-        Returns
-        -------
-        List[List[sentence]]
-            Для каждого входного текста — список предложений.
-        """
         if output_format not in ("dict", "native"):
             raise ValueError(
                 f"Неизвестный output_format={output_format!r}. "
                 "Допустимые значения: 'dict', 'native'."
             )
-
         all_results = []
         for text in texts:
-            # FIX P3: pipeline получает сырой текст и сам токенизирует razdel-ом.
-            # Оригинал принимал List[str] (токены) и делал " ".join(tokens),
-            # что создавало тройную токенизацию:
-            #   1. wrapper: razdel_tokenize(text) → tokens
-            #   2. modal:   " ".join(tokens) → text (с потерей границ!)
-            #   3. pipeline: razdel внутри preprocess() → новые токены
-            # Пример потери: ["Кружка-термос"] → join → pipeline razdel
-            #   → ["Кружка", "-", "термос"] (другой результат!)
             if not text or not text.strip():
                 all_results.append([])
                 continue
-            decoded_sentences = self.pipeline(text, output_format="list")
-
-            # FIX P4: обрабатываем ВСЕ предложения текста, не только [0].
-            # Оригинал: sentence_data = decoded_sentences[0]
-            # При нескольких предложениях в тексте остальные молча терялись.
+            # Зеркало wrapper: sentenize → по одному предложению в pipeline
+            sentences = [s.text for s in self.sentenize(text)]
             text_results = []
-            for sentence_data in decoded_sentences:
+            for sent_text in sentences:
+                decoded = self.pipeline(sent_text, output_format="list")
+                if not decoded:
+                    continue
+                sd = decoded[0]
                 if output_format == "native":
-                    text_results.append(self._format_native_output(sentence_data))
+                    text_results.append(self._format_native_output(sd))
                 else:
-                    text_results.append(self._build_dict(sentence_data))
+                    text_results.append(self._build_dict(sd))
             all_results.append(text_results)
         return all_results
+
+    # def _parse_batch_impl(
+    #     self,
+    #     texts: List[str],
+    #     output_format: str = "dict",
+    # ) -> List[List[Any]]:
+    #     """
+    #     Внутренняя реализация: разбирает список текстов.
+    #
+    #     Returns
+    #     -------
+    #     List[List[sentence]]
+    #         Для каждого входного текста — список предложений.
+    #     """
+    #     if output_format not in ("dict", "native"):
+    #         raise ValueError(
+    #             f"Неизвестный output_format={output_format!r}. "
+    #             "Допустимые значения: 'dict', 'native'."
+    #         )
+    #
+    #     all_results = []
+    #     for text in texts:
+    #         # FIX P3: pipeline получает сырой текст и сам токенизирует razdel-ом.
+    #         # Оригинал принимал List[str] (токены) и делал " ".join(tokens),
+    #         # что создавало тройную токенизацию:
+    #         #   1. wrapper: razdel_tokenize(text) → tokens
+    #         #   2. modal:   " ".join(tokens) → text (с потерей границ!)
+    #         #   3. pipeline: razdel внутри preprocess() → новые токены
+    #         # Пример потери: ["Кружка-термос"] → join → pipeline razdel
+    #         #   → ["Кружка", "-", "термос"] (другой результат!)
+    #         if not text or not text.strip():
+    #             all_results.append([])
+    #             continue
+    #         decoded_sentences = self.pipeline(text, output_format="list")
+    #
+    #         # FIX P4: обрабатываем ВСЕ предложения текста, не только [0].
+    #         # Оригинал: sentence_data = decoded_sentences[0]
+    #         # При нескольких предложениях в тексте остальные молча терялись.
+    #         text_results = []
+    #         for sentence_data in decoded_sentences:
+    #             if output_format == "native":
+    #                 text_results.append(self._format_native_output(sentence_data))
+    #             else:
+    #                 text_results.append(self._build_dict(sentence_data))
+    #         all_results.append(text_results)
+    #     return all_results
 
     @modal.method()
     def parse_batch(
@@ -278,15 +309,27 @@ class CobaldService:
         id_mapping = self._build_id_mapping(sentence_data)
         result = []
 
+        # Defensive: pipeline иногда возвращает deps_ud короче остальных массивов
+        n_ref = len(sentence_data["words"])
+        deps_ud = list(sentence_data["deps_ud"])
+        if len(deps_ud) < n_ref:
+            self.logger.warning(
+                f"deps_ud короче words ({len(deps_ud)} vs {n_ref}), дополняем defaults"
+            )
+            while len(deps_ud) < n_ref:
+                # ('0', self_id, '_') — безопасный fallback в формате CoBaLD
+                deps_ud.append(("0", str(len(deps_ud) + 1), "_"))
+
         lengths = {k: len(sentence_data[k]) for k in
-                   ("words", "ids", "deps_ud", "miscs", "deepslots", "semclasses")}
+                   ("words", "ids", "miscs", "deepslots", "semclasses")}
+        lengths["deps_ud"] = len(deps_ud)  # проверяем уже padded
         if len(set(lengths.values())) != 1:
             raise ValueError(f"Длины массивов расходятся: {lengths}")
 
         for word, word_id, dep_ud, misc, deepslot, semclass in zip(
                 sentence_data["words"],
                 sentence_data["ids"],
-                sentence_data["deps_ud"],
+                deps_ud,  # ← padded
                 sentence_data["miscs"],
                 sentence_data["deepslots"],
                 sentence_data["semclasses"],
@@ -312,25 +355,32 @@ class CobaldService:
         id_mapping = self._build_id_mapping(sentence_data)
         result = []
 
+        n_ref = len(sentence_data["words"])
+
+        deps_ud = list(sentence_data["deps_ud"])
+        while len(deps_ud) < n_ref:
+            deps_ud.append(("0", str(len(deps_ud) + 1), "_"))
+
+        deps_eud = list(sentence_data["deps_eud"])
+        while len(deps_eud) < n_ref:
+            deps_eud.append(("0", str(len(deps_eud) + 1), "_"))
+
         lengths = {k: len(sentence_data[k]) for k in (
-            "words", "ids", "deps_ud", "lemmas", "upos", "xpos",
-            "feats", "deps_eud", "miscs", "deepslots", "semclasses",
+            "words", "ids", "lemmas", "upos", "xpos",
+            "feats", "miscs", "deepslots", "semclasses",
         )}
+        lengths["deps_ud"] = len(deps_ud)
+        lengths["deps_eud"] = len(deps_eud)
         if len(set(lengths.values())) != 1:
             raise ValueError(f"Длины массивов расходятся: {lengths}")
 
-        for word, word_id, dep_ud, lemma, upos, xpos, feats, deps_eud, misc, deepslot, semclass in zip(
-                sentence_data["words"],
-                sentence_data["ids"],
-                sentence_data["deps_ud"],
-                sentence_data["lemmas"],
-                sentence_data["upos"],
-                sentence_data["xpos"],
+        for word, word_id, dep_ud, lemma, upos, xpos, feats, deps_eud_item, misc, deepslot, semclass in zip(
+                sentence_data["words"], sentence_data["ids"],
+                deps_ud,  # ← padded
+                sentence_data["lemmas"], sentence_data["upos"], sentence_data["xpos"],
                 sentence_data["feats"],
-                sentence_data["deps_eud"],
-                sentence_data["miscs"],
-                sentence_data["deepslots"],
-                sentence_data["semclasses"],
+                deps_eud,  # ← padded
+                sentence_data["miscs"], sentence_data["deepslots"], sentence_data["semclasses"],
         ):
             str_id = str(word_id)
             if word == "[CLS]" or "#NULL" in str_id:
