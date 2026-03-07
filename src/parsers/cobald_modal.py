@@ -184,6 +184,49 @@ class CobaldService:
         return self._parse_batch_impl(texts, output_format)
 
     @modal.method()
+    def parse_sentence_chunk(
+            self,
+            sentences: List[str],
+            output_format: str = "dict",
+    ) -> List[List[Any]]:
+        """
+        Принимает чанк предложений, уже нарезанных razdel.sentenize на стороне wrapper.
+        Каждое предложение подаётся в pipeline как отдельный текст — sentenizer внутри
+        вернёт ровно один результат (decoded_sentences[0]).
+
+        Parameters
+        ----------
+        sentences : List[str]
+            Список текстов предложений (один чанк от wrapper-а).
+        output_format : str
+            'dict' | 'native'
+
+        Returns
+        -------
+        List[List[token]]
+            Список предложений; каждое — список токенов.
+        """
+        if output_format not in ("dict", "native"):
+            raise ValueError(
+                f"Неизвестный output_format={output_format!r}. "
+                "Допустимые значения: 'dict', 'native'."
+            )
+        result = []
+        for sent_text in sentences:
+            if not sent_text or not sent_text.strip():
+                continue
+            decoded = self.pipeline(sent_text, output_format="list")
+            if not decoded:
+                continue
+            # pipeline получает одно предложение → берём только первый элемент
+            sd = decoded[0]
+            if output_format == "native":
+                result.append(self._format_native_output(sd))
+            else:
+                result.append(self._build_dict(sd))
+        return result
+
+    @modal.method()
     def parse(
         self,
         # FIX P3: был List[str] (токены), теперь str (сырой текст)

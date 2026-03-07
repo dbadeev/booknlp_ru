@@ -28,6 +28,8 @@
 import logging
 import sys
 from typing import Any, Dict, List, Literal
+from itertools import islice
+from razdel import sentenize
 
 import modal
 
@@ -36,6 +38,7 @@ OutputFormat = Literal["dict", "native"]
 
 class CobaldParser:
     """Клиент CoBaLD-парсера, запущенного в Modal."""
+    SENTENCE_CHUNK_SIZE: int = 32  # предложений на чанк; подбирается под GPU/тип текстов
 
     def __init__(self):
         self.logger = logging.getLogger(__name__)
@@ -48,69 +51,206 @@ class CobaldParser:
             self.logger.error(f"❌ Failed to connect to Modal: {e2}")
             raise
 
+    # ─────────────────────── ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ─────────────────────────────
+    @staticmethod
+    def _split_to_sentence_chunks(
+            text: str,
+            chunk_size: int,
+    ) -> List[List[str]]:
+        """
+        Разбивает текст на предложения (razdel.sentenize) и нарезает на чанки.
+
+        Returns
+        -------
+        List[List[str]]
+            Список чанков; каждый чанк — список текстов предложений.
+        """
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size должен быть > 0, получено: {chunk_size}")
+        sentences = [s.text for s in sentenize(text)]
+        return [
+            sentences[i: i + chunk_size]
+            for i in range(0, len(sentences), chunk_size)
+        ]
+
+    @staticmethod
+    def _merge_chunks(
+            chunk_results: List[List[List[Any]]],
+    ) -> List[List[Dict[str, Any]]]:
+        """Собирает результаты чанков в плоский список предложений."""
+        return [sent for chunk in chunk_results for sent in chunk]
+
     def parse_text(
-        self,
-        text: str,
-        output_format: OutputFormat = "dict",
+            self,
+            text: str,
+            output_format: OutputFormat = "dict",
+            chunk_size: int = SENTENCE_CHUNK_SIZE,
     ) -> List[List[Dict[str, Any]]]:
         """
         Разбирает текст, возвращает все предложения.
+
+        Sentenize и chunking выполняются локально (razdel), чанки отправляются
+        в Modal параллельно через .map(). Это предотвращает OOM при больших текстах.
 
         Parameters
         ----------
         text : str
             Сырой текст.
         output_format : str
-            'dict'   → id, form, head, deprel, misc, deepslot, semclass
-            'native' → то же + lemma, upos, xpos, feats, deps_eud, is_null
+            'dict' | 'native'
+        chunk_size : int
+            Число предложений в одном чанке. Уменьшайте при OOM.
 
         Returns
         -------
         List[List[Dict]]
             Список предложений; каждое — список токенов.
         """
+        if output_format not in ("dict", "native"):
+            raise ValueError(f"Unknown output_format: {output_format!r}")
+        if not text or not text.strip():
+            return []
+
+        chunks = self._split_to_sentence_chunks(text, chunk_size)
+        if not chunks:
+            return []
+
         try:
-            if output_format not in ("dict", "native"):
-                raise ValueError(
-                    f"Неизвестный output_format={output_format!r}. "
-                    "Допустимые значения: 'dict', 'native'."
+            chunk_results = list(
+                self.service.parse_sentence_chunk.map(
+                    chunks,
+                    kwargs={"output_format": output_format},
                 )
-            result = self.service.parse.remote(text, output_format=output_format)
-            if result is None:
-                self.logger.warning("Сервис вернул None.")
-                return []
-            return result  # [] для пустого текста — корректный результат
-        except Exception as e2:
-            self.logger.error(f"❌ Ошибка при разборе: {e2}")
+            )
+            return self._merge_chunks(chunk_results)
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка при разборе текста: {e}")
             raise
 
+    # def parse_text(
+    #     self,
+    #     text: str,
+    #     output_format: OutputFormat = "dict",
+    # ) -> List[List[Dict[str, Any]]]:
+    #     """
+    #     Разбирает текст, возвращает все предложения.
+    #
+    #     Parameters
+    #     ----------
+    #     text : str
+    #         Сырой текст.
+    #     output_format : str
+    #         'dict'   → id, form, head, deprel, misc, deepslot, semclass
+    #         'native' → то же + lemma, upos, xpos, feats, deps_eud, is_null
+    #
+    #     Returns
+    #     -------
+    #     List[List[Dict]]
+    #         Список предложений; каждое — список токенов.
+    #     """
+    #     try:
+    #         if output_format not in ("dict", "native"):
+    #             raise ValueError(
+    #                 f"Неизвестный output_format={output_format!r}. "
+    #                 "Допустимые значения: 'dict', 'native'."
+    #             )
+    #         result = self.service.parse.remote(text, output_format=output_format)
+    #         if result is None:
+    #             self.logger.warning("Сервис вернул None.")
+    #             return []
+    #         return result  # [] для пустого текста — корректный результат
+    #     except Exception as e2:
+    #         self.logger.error(f"❌ Ошибка при разборе: {e2}")
+    #         raise
+
     def parse_batch(
-        self,
-        texts: List[str],
-        output_format: OutputFormat = "dict",
-        batch_size: int = 32,
+            self,
+            texts: List[str],
+            output_format: OutputFormat = "dict",
+            chunk_size: int = SENTENCE_CHUNK_SIZE,
     ) -> List[List[List[Dict[str, Any]]]]:
         """
         Пакетная обработка списка текстов.
+
+        Все чанки всех текстов собираются и отправляются в Modal одним .map() —
+        Modal распределяет по контейнерам параллельно.
 
         Returns
         -------
         List[List[List[Dict]]]
             Для каждого текста — список предложений.
         """
+        if output_format not in ("dict", "native"):
+            raise ValueError(f"Unknown output_format: {output_format!r}")
+        if not texts:
+            return []
+
+        # Нарезаем все тексты на чанки, запоминаем сколько чанков у каждого текста
+        chunks_per_text: List[int] = []
+        all_chunks: List[List[str]] = []
+        for text in texts:
+            if not text or not text.strip():
+                chunks_per_text.append(0)
+                continue
+            text_chunks = self._split_to_sentence_chunks(text, chunk_size)
+            chunks_per_text.append(len(text_chunks))
+            all_chunks.extend(text_chunks)
+
+        if not all_chunks:
+            return [[] for _ in texts]
+
         try:
-            results = []
-            for i in range(0, len(texts), batch_size):
-                batch        = texts[i : i + batch_size]
-                batch_result = self.service.parse_batch.remote(
-                    batch, output_format=output_format
+            # Один .map() → Modal параллелит все чанки
+            all_results = list(
+                self.service.parse_sentence_chunk.map(
+                    all_chunks,
+                    kwargs={"output_format": output_format},
                 )
-                results.extend(batch_result or [])
-            return results
-        except Exception as e2:
-            self.logger.error(f"❌ Ошибка при пакетной обработке: {e2}")
+            )
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка при пакетной обработке: {e}")
             raise
 
+        # Собираем обратно: каждому тексту возвращаем его предложения
+        results: List[List[List[Dict[str, Any]]]] = []
+        offset = 0
+        for n_chunks in chunks_per_text:
+            if n_chunks == 0:
+                results.append([])
+            else:
+                results.append(
+                    self._merge_chunks(all_results[offset: offset + n_chunks])
+                )
+                offset += n_chunks
+        return results
+
+    # def parse_batch(
+    #     self,
+    #     texts: List[str],
+    #     output_format: OutputFormat = "dict",
+    #     batch_size: int = 32,
+    # ) -> List[List[List[Dict[str, Any]]]]:
+    #     """
+    #     Пакетная обработка списка текстов.
+    #
+    #     Returns
+    #     -------
+    #     List[List[List[Dict]]]
+    #         Для каждого текста — список предложений.
+    #     """
+    #     try:
+    #         results = []
+    #         for i in range(0, len(texts), batch_size):
+    #             batch        = texts[i : i + batch_size]
+    #             batch_result = self.service.parse_batch.remote(
+    #                 batch, output_format=output_format
+    #             )
+    #             results.extend(batch_result or [])
+    #         return results
+    #     except Exception as e2:
+    #         self.logger.error(f"❌ Ошибка при пакетной обработке: {e2}")
+    #         raise
+    #
 
 # ─────────────────────── ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ─────────────────────────────
 def _dep_tuple_to_str(dep: Any) -> str:
