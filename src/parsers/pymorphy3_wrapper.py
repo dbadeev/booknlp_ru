@@ -576,7 +576,7 @@ if __name__ == "__main__":
 
         # ── [11] parse_batch со смешанными пустыми/непустыми текстами ────────────────────────────────────
         print(f"\n{sep}")
-        print("[10] parse_batch со смешанными пустыми/непустыми текстами")
+        print("[11] parse_batch со смешанными пустыми/непустыми текстами")
         print(sep)
         mixed = ["", "Зло пугает.", ""]
         results_mixed = parser.parse_batch(mixed, output_format="simplified",
