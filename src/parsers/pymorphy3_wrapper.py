@@ -388,7 +388,8 @@ if __name__ == "__main__":
         # [1.6] невалидный output_format
         try:
             try:
-                Pymorphy3Parser.parse_text(parser_local, "Текст.", output_format="conllu")
+                invalid_fmt: str = "conllu"
+                Pymorphy3Parser.parse_text(parser_local, "Текст.", output_format=invalid_fmt)  # type: ignore[arg-type]
                 fail("[1.6] output_format=conllu", "ValueError не выброшен")
             except ValueError as exc:
                 print(f"  Поймано: {exc!r}")
@@ -399,7 +400,7 @@ if __name__ == "__main__":
         # [1.7] невалидный tokenizer
         try:
             try:
-                Pymorphy3Parser.parse_text(parser_local, "Текст.", tokenizer="spacy")
+                Pymorphy3Parser.parse_text(parser_local, "Текст.", tokenizer="spacy")  # type: ignore[arg-type]
                 fail("[1.7] tokenizer=spacy", "ValueError не выброшен")
             except ValueError as exc:
                 print(f"  Поймано: {exc!r}")
@@ -559,17 +560,18 @@ if __name__ == "__main__":
         print("[10] parse_batch ≡ parse_text × N  (razdel, chunk_size=1)")
         print(sep)
         try:
-            batch = parser.parse_batch(batch, output_format="simplified",
-                                       tokenizer="razdel", chunk_size=1)
-            for i, text in enumerate(batch):
+            batch_results = parser.parse_batch(batch, output_format="simplified",
+                                               tokenizer="razdel", chunk_size=1)
+            for i, text in enumerate(batch):  # ← batch по-прежнему List[str]
                 single = parser.parse_text(text, output_format="simplified",
                                            tokenizer="razdel", chunk_size=1)
-                assert len(batch[i]) == len(single), \
-                    f"текст {i+1}: batch={len(batch[i])} vs single={len(single)}"
-                for sb, ss in zip(batch[i], single):
+                assert len(batch_results[i]) == len(single), \
+                    f"текст {i + 1}: batch={len(batch_results[i])} vs single={len(single)}"
+                for sb, ss in zip(batch_results[i], single):
                     fb = [t["form"] for t in sb]
                     fs = [t["form"] for t in ss]
-                    assert fb == fs, f"текст {i+1}: forms differ: {fb} vs {fs}"
+                    assert fb == fs, f"текст {i + 1}: forms differ: {fb} vs {fs}"
+            ok(f"[10] parse_batch ≡ parse_text × {len(batch)}")
             ok(f"[10] parse_batch ≡ parse_text × {len(batch)}")
         except Exception as e:
             fail("[10] parse_batch vs parse_text", e)
