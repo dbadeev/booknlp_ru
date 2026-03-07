@@ -31,8 +31,6 @@ from typing import Any, Dict, List, Literal
 
 import modal
 
-# logger = logging.getLogger(__name__)
-
 OutputFormat = Literal["dict", "native"]
 
 
@@ -72,6 +70,11 @@ class CobaldParser:
             Список предложений; каждое — список токенов.
         """
         try:
+            if output_format not in ("dict", "native"):
+                raise ValueError(
+                    f"Неизвестный output_format={output_format!r}. "
+                    "Допустимые значения: 'dict', 'native'."
+                )
             result = self.service.parse.remote(text, output_format=output_format)
             if result is None:
                 self.logger.warning("Сервис вернул None.")
@@ -147,9 +150,12 @@ def _to_conllu_str(sentences: List[List[Dict[str, Any]]]) -> str:
     При dict-формате LEMMA/UPOS/XPOS/FEATS/DEPS будут '_'.
     """
     lines = []
-    for snt in sentences:
+    for sent_idx, snt in enumerate(sentences, 1):
         if not snt:
             continue
+        lines.append(f"# sent_id = {sent_idx}")
+        lines.append(f"# text = {' '.join(t.get('form', '') for t in snt)}")
+
         for tok in snt:
             # ── MISC: объединяем оригинальный misc с CoBaLD-полями ──────────
             misc_parts = []

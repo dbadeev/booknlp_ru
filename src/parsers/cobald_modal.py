@@ -220,6 +220,9 @@ class CobaldService:
             if len(dep_ud_item) == 2:
                 # ('head_id', 'deprel')  ← fallback
                 return str(dep_ud_item[0]), str(dep_ud_item[1])
+            if len(dep_ud_item) == 0:
+                logging.warning(f"_extract_dep: пустой deps_ud, подставляем ('0','_')")
+                return "0", "_"
         if isinstance(dep_ud_item, dict):
             return str(dep_ud_item.get("head", "0")), str(dep_ud_item.get("deprel", "_"))
         if isinstance(dep_ud_item, str) and ":" in dep_ud_item:
