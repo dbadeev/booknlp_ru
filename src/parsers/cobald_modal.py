@@ -356,42 +356,168 @@ class CobaldService:
 
 
 # ─────────────────────── LOCAL ENTRYPOINT ────────────────────
+# @app.local_entrypoint()
+# def main():
+#     """Тестирование CoBaLD сервиса (4 комбинации)."""
+#     test_single = "Мама мыла раму. Папа читал газету."
+#     test_batch  = ["Он думал о море.", "Кот лежал на диване."]
+#
+#     sep = "=" * 70
+#     print(f"{sep}\nТЕСТИРОВАНИЕ COBALD SERVICE\n{sep}")
+#
+#     service = CobaldService()
+#
+#     # 1. parse → dict
+#     print("\n1. parse (dict):")
+#     result = service.parse.remote(test_single, output_format="dict")
+#     print(f"   Предложений: {len(result)}")
+#     for s_idx, sent in enumerate(result, 1):
+#         forms = [t["form"] for t in sent]
+#         print(f"   [{s_idx}] {forms}")
+#         for tok in sent:
+#             print(f"       id={tok['id']} head={tok['head']} "
+#                   f"deprel={tok['deprel']:<12} "
+#                   f"deepslot={tok['deepslot']} semclass={tok['semclass']}")
+#
+#     # 2. parse → native
+#     print("\n2. parse (native):")
+#     result = service.parse.remote(test_single, output_format="native")
+#     print(f"   Предложений: {len(result)}")
+#     for s_idx, sent in enumerate(result, 1):
+#         print(f"   [{s_idx}] ключи токена: {list(sent[0].keys()) if sent else '—'}")
+#
+#     # 3. parse_batch → dict
+#     print("\n3. parse_batch (dict):")
+#     result = service.parse_batch.remote(test_batch, output_format="dict")
+#     for t_idx, text_sents in enumerate(result):
+#         total = sum(len(s) for s in text_sents)
+#         print(f"   [{t_idx}] '{test_batch[t_idx]}' "
+#               f"→ {len(text_sents)} предл., {total} токенов")
+#
+#     print(f"\n{'=' * 70}\n✅ Тестирование завершено\n{'=' * 70}")
+
 @app.local_entrypoint()
 def main():
-    """Тестирование CoBaLD сервиса (4 комбинации)."""
-    test_single = "Мама мыла раму. Папа читал газету."
-    test_batch  = ["Он думал о море.", "Кот лежал на диване."]
+    """
+    Тестирует CobaldService напрямую — без wrapper.
+    Запуск: modal run src/parsers/cobald_modal.py
 
-    sep = "=" * 70
-    print(f"{sep}\nТЕСТИРОВАНИЕ COBALD SERVICE\n{sep}")
+    Тест-секции:
+    [1] parse_sentence_chunk — dict
+    [2] parse_sentence_chunk — native
+    [3] Пустой чанк → []
+    [4] Неверный output_format → ValueError
+    [5] parse (backward compat, dict)
+    """
+    from razdel import sentenize
+
+    sep = "=" * 72
+    passed = 0
+    failed = 0
+
+    def ok(name: str):
+        nonlocal passed
+        passed += 1
+        print(f"  ✅ {name}")
+
+    def fail(name: str, err):
+        nonlocal failed
+        failed += 1
+        print(f"  ❌ {name}: {err}")
+
+    text_sample = "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
+    multi_sample = "Мама мыла раму. Папа читал газету. Кот лежал на диване."
 
     service = CobaldService()
 
-    # 1. parse → dict
-    print("\n1. parse (dict):")
-    result = service.parse.remote(test_single, output_format="dict")
-    print(f"   Предложений: {len(result)}")
-    for s_idx, sent in enumerate(result, 1):
-        forms = [t["form"] for t in sent]
-        print(f"   [{s_idx}] {forms}")
-        for tok in sent:
-            print(f"       id={tok['id']} head={tok['head']} "
-                  f"deprel={tok['deprel']:<12} "
-                  f"deepslot={tok['deepslot']} semclass={tok['semclass']}")
+    # ── [1] parse_sentence_chunk — dict ─────────────────────────────────────
+    print(f"\n{sep}")
+    print("[1] parse_sentence_chunk (dict)")
+    print(sep)
+    try:
+        sentences = [s.text for s in sentenize(multi_sample)]
+        result = service.parse_sentence_chunk.remote(sentences, output_format="dict")
+        assert isinstance(result, list), "результат не list"
+        assert len(result) == len(sentences), \
+            f"ожидалось {len(sentences)} предл., получено {len(result)}"
+        for sent in result:
+            assert isinstance(sent, list) and len(sent) > 0, "предложение пустое"
+            for tok in sent:
+                for key in ("id", "form", "head", "deprel", "misc", "deepslot", "semclass"):
+                    assert key in tok, f"ключ {key!r} отсутствует"
+                assert isinstance(tok["id"], int), "id не int"
+                assert isinstance(tok["head"], int), "head не int"
+        # Вывод для визуальной проверки
+        for i, (sent, sent_text) in enumerate(zip(result, sentences), 1):
+            forms = [t["form"] for t in sent]
+            print(f"  [{i}] {sent_text!r} → {len(sent)} токенов: {forms}")
+        ok("[1] parse_sentence_chunk / dict — структура корректна")
+    except Exception as e:
+        fail("[1] parse_sentence_chunk / dict", e)
 
-    # 2. parse → native
-    print("\n2. parse (native):")
-    result = service.parse.remote(test_single, output_format="native")
-    print(f"   Предложений: {len(result)}")
-    for s_idx, sent in enumerate(result, 1):
-        print(f"   [{s_idx}] ключи токена: {list(sent[0].keys()) if sent else '—'}")
+    # ── [2] parse_sentence_chunk — native ───────────────────────────────────
+    print(f"\n{sep}")
+    print("[2] parse_sentence_chunk (native)")
+    print(sep)
+    try:
+        sentences = [s.text for s in sentenize(text_sample)]
+        result = service.parse_sentence_chunk.remote(sentences, output_format="native")
+        assert isinstance(result, list)
+        assert len(result) == len(sentences)
+        for sent in result:
+            for tok in sent:
+                for key in ("id", "form", "lemma", "upos", "xpos", "feats",
+                            "head", "deprel", "deps_eud", "misc",
+                            "deepslot", "semclass", "is_null"):
+                    assert key in tok, f"ключ {key!r} отсутствует в native"
+                assert tok["is_null"] is False
+        print(f"  Ключи токена: {list(result[0][0].keys())}")
+        ok("[2] parse_sentence_chunk / native — структура корректна")
+    except Exception as e:
+        fail("[2] parse_sentence_chunk / native", e)
 
-    # 3. parse_batch → dict
-    print("\n3. parse_batch (dict):")
-    result = service.parse_batch.remote(test_batch, output_format="dict")
-    for t_idx, text_sents in enumerate(result):
-        total = sum(len(s) for s in text_sents)
-        print(f"   [{t_idx}] '{test_batch[t_idx]}' "
-              f"→ {len(text_sents)} предл., {total} токенов")
+    # ── [3] Пустой чанк → [] ────────────────────────────────────────────────
+    print(f"\n{sep}")
+    print("[3] Пустой чанк → []")
+    print(sep)
+    try:
+        result = service.parse_sentence_chunk.remote([], output_format="dict")
+        assert result == [], f"ожидался [], получено {result!r}"
+        ok("[3] Пустой чанк → []")
+    except Exception as e:
+        fail("[3] Пустой чанк", e)
 
-    print(f"\n{'=' * 70}\n✅ Тестирование завершено\n{'=' * 70}")
+    # ── [4] Неверный output_format → ValueError ──────────────────────────────
+    print(f"\n{sep}")
+    print("[4] Неверный output_format → ValueError")
+    print(sep)
+    try:
+        try:
+            service.parse_sentence_chunk.remote(["Текст."], output_format="conllu")
+            fail("[4] ValueError не выброшен", "исключение не возникло")
+        except (ValueError, Exception) as exc:
+            assert "output_format" in str(exc).lower() or "conllu" in str(exc).lower() \
+                   or "unknown" in str(exc).lower(), f"Неожиданное сообщение: {exc}"
+            print(f"  Поймано: {exc!r}")
+            ok("[4] Неверный output_format → ValueError")
+    except Exception as e:
+        fail("[4] ValueError", e)
+
+    # ── [5] parse (backward compat) ──────────────────────────────────────────
+    print(f"\n{sep}")
+    print("[5] parse (backward compat, dict)")
+    print(sep)
+    try:
+        result = service.parse.remote(multi_sample, output_format="dict")
+        assert isinstance(result, list) and len(result) == 3, \
+            f"ожидалось 3 предл., получено {len(result)}"
+        print(f"  Предложений: {len(result)}")
+        ok("[5] parse / backward compat")
+    except Exception as e:
+        fail("[5] parse / backward compat", e)
+
+    # ── Итог ─────────────────────────────────────────────────────────────────
+    total = passed + failed
+    print(f"\n{sep}")
+    print(f"ИТОГ: {passed}/{total} тестов прошло" + (" ✅" if failed == 0 else f" ❌ {failed} упало"))
+    print(sep)
