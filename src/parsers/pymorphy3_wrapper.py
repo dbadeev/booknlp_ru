@@ -5,7 +5,7 @@
 Wrapper — тонкий клиент. Три обязанности:
   1. Сентенизация текста (razdel.sentenize) и разбивка на чанки.
   2. Маршрутизация чанков в Modal-сервис (.remote() / .map()).
-  3. Склейка результатов чанков (_merge_chunks).
+  3. Склейка результатов чанков (merge_chunks).
 
 Вся морфология, форматирование, вывод — в pymorphy3_modal.py.
 
@@ -69,7 +69,7 @@ class Pymorphy3Parser:
     # ─── Chunking ─────────────────────────────────────────────────────────────
 
     @staticmethod
-    def _split_to_chunks(
+    def split_to_chunks(
         text: str,
         chunk_size: int,
         base_offset: int = 0,
@@ -93,7 +93,7 @@ class Pymorphy3Parser:
         ]
 
     @staticmethod
-    def _split_to_sentence_chunks(
+    def split_to_sentence_chunks(
         text: str,
         chunk_size: int,
     ) -> List[List[str]]:
@@ -112,7 +112,7 @@ class Pymorphy3Parser:
         ]
 
     @staticmethod
-    def _merge_chunks(
+    def merge_chunks(
         chunk_results: List[Any],
     ) -> List[List[Dict[str, Any]]]:
         """
@@ -155,20 +155,20 @@ class Pymorphy3Parser:
 
         try:
             if tokenizer == "razdel":
-                chunks = self._split_to_chunks(text, chunk_size)
+                chunks = self.split_to_chunks(text, chunk_size)
                 if not chunks:
                     return []
                 chunk_results = list(self.service.parse_sentence_chunk.map(
                     chunks, kwargs={"output_format": output_format}
                 ))
             else:  # native
-                chunks = self._split_to_sentence_chunks(text, chunk_size)
+                chunks = self.split_to_sentence_chunks(text, chunk_size)
                 if not chunks:
                     return []
                 chunk_results = list(self.service.parse_sentence_chunk_native.map(
                     chunks, kwargs={"output_format": output_format}
                 ))
-            return self._merge_chunks(chunk_results)
+            return self.merge_chunks(chunk_results)
 
         except Exception as exc:
             self.logger.error(f"Error during pymorphy3 parsing: {exc}")
@@ -204,7 +204,7 @@ class Pymorphy3Parser:
             if tokenizer == "razdel":
                 all_chunks: List[List[Tuple[str, int]]] = []
                 for text in texts:
-                    text_chunks = self._split_to_chunks(text, chunk_size)
+                    text_chunks = self.split_to_chunks(text, chunk_size)
                     chunks_per_text.append(len(text_chunks))
                     all_chunks.extend(text_chunks)
                 if not all_chunks:
@@ -215,7 +215,7 @@ class Pymorphy3Parser:
             else:  # native
                 all_chunks_native: List[List[str]] = []
                 for text in texts:
-                    text_chunks = self._split_to_sentence_chunks(text, chunk_size)
+                    text_chunks = self.split_to_sentence_chunks(text, chunk_size)
                     chunks_per_text.append(len(text_chunks))
                     all_chunks_native.extend(text_chunks)
                 if not all_chunks_native:
@@ -226,7 +226,7 @@ class Pymorphy3Parser:
 
             results, offset = [], 0
             for n_chunks in chunks_per_text:
-                results.append(self._merge_chunks(
+                results.append(self.merge_chunks(
                     all_results[offset:offset + n_chunks]
                 ))
                 offset += n_chunks
@@ -257,10 +257,10 @@ if __name__ == "__main__":
 
         Тест-секции:
           [1] Chunking (локально, без Modal)
-              [1.1] _split_to_chunks: офсеты корректны
-              [1.2] _split_to_sentence_chunks: только строки, без офсетов
+              [1.1] split_to_chunks: офсеты корректны
+              [1.2] split_to_sentence_chunks: только строки, без офсетов
               [1.3] Оба пути дают одинаковое число предложений
-              [1.4] _merge_chunks: склейка корректна
+              [1.4] merge_chunks: склейка корректна
               [1.5] Невалидный chunk_size → ValueError
               [1.6] Невалидный output_format → ValueError
               [1.7] Невалидный tokenizer → ValueError
@@ -281,28 +281,28 @@ if __name__ == "__main__":
 
         _HEADER = "ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL"
 
-        def print_simplified(sent, sent_text: str = "") -> None:
-            if sent_text:
-                print(f"# text = {sent_text}")
+        def print_simplified(sentence, sentence_text: str = "") -> None:
+            if sentence_text:
+                print(f"# text = {sentence_text}")
             print(_HEADER)
-            for tok in sent:
+            for token in sentence:
                 print("\t".join([
-                    str(tok["id"]), tok["form"], tok["lemma"],
-                    tok["upos"], tok["xpos"], tok["feats"],
-                    str(tok["head"]), tok["deprel"],
+                    str(token["id"]), token["form"], token["lemma"],
+                    token["upos"], token["xpos"], token["feats"],
+                    str(token["head"]), token["deprel"],
                 ]))
 
-        def print_native(sent) -> None:
-            for tok in sent:
-                print(f"ID: {tok['id']}")
-                print(f"  Word: {tok['word']}")
-                print(f"  Normal form: {tok['normal_form']}")
-                print(f"  Tag: {tok['tag']}")
-                print(f"  Score: {tok['score']}")
-                print(f"  Lexeme (forms): {tok['lexeme'][:3]}...")
-                print(f"  Methods stack: {tok['methods_stack']}")
-                print(f"  Is known: {tok['is_known']}")
-                print(f"  Normalized: {tok['normalized']}")
+        def print_native(sentence) -> None:
+            for token in sentence:
+                print(f"ID: {token['id']}")
+                print(f"  Word: {token['word']}")
+                print(f"  Normal form: {token['normal_form']}")
+                print(f"  Tag: {token['tag']}")
+                print(f"  Score: {token['score']}")
+                print(f"  Lexeme (forms): {token['lexeme'][:3]}...")
+                print(f"  Methods stack: {token['methods_stack']}")
+                print(f"  Is known: {token['is_known']}")
+                print(f"  Normalized: {token['normalized']}")
                 print()
 
         # ── Служебные ─────────────────────────────────────────────────────────
@@ -320,40 +320,40 @@ if __name__ == "__main__":
             failed += 1
             print(f"  ❌  {name}: {err}")
 
-        TEXT   = "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
-        MULTI  = "Зло пугает. Москва — столица России. Крупнейший город страны."
-        BATCH  = [TEXT, "Москва — столица.", "Лиса прыгает через забор."]
+        text_sample   = "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
+        multi_sample  = "Зло пугает. Москва — столица России. Крупнейший город страны."
+        batch  = [text_sample, "Москва — столица.", "Лиса прыгает через забор."]
 
         # ── [1] Chunking (без Modal) ──────────────────────────────────────────────
         print(f"\n{sep}")
         print("[1] Chunking (локально, без Modal)")
         print(sep)
 
-        # [1.1] _split_to_chunks офсеты
+        # [1.1] split_to_chunks офсеты
         try:
-            chunks = Pymorphy3Parser._split_to_chunks(MULTI, chunk_size=10)
+            chunks = Pymorphy3Parser.split_to_chunks(multi_sample, chunk_size=10)
             for chunk in chunks:
                 for sent_text, start in chunk:
-                    assert MULTI[start:start + len(sent_text)] == sent_text, \
-                        f"offset={start} → {MULTI[start:start+len(sent_text)]!r} ≠ {sent_text!r}"
-            ok("[1.1] _split_to_chunks — офсеты корректны")
+                    assert multi_sample[start:start + len(sent_text)] == sent_text, \
+                        f"offset={start} → {multi_sample[start:start+len(sent_text)]!r} ≠ {sent_text!r}"
+            ok("[1.1] split_to_chunks — офсеты корректны")
         except Exception as e:
-            fail("[1.1] _split_to_chunks офсеты", e)
+            fail("[1.1] split_to_chunks офсеты", e)
 
-        # [1.2] _split_to_sentence_chunks — только строки
+        # [1.2] split_to_sentence_chunks — только строки
         try:
-            sc = Pymorphy3Parser._split_to_sentence_chunks(MULTI, chunk_size=10)
+            sc = Pymorphy3Parser.split_to_sentence_chunks(multi_sample, chunk_size=10)
             for chunk in sc:
                 for item in chunk:
                     assert isinstance(item, str), f"ожидался str, получено {type(item)}"
-            ok("[1.2] _split_to_sentence_chunks — только строки, без офсетов")
+            ok("[1.2] split_to_sentence_chunks — только строки, без офсетов")
         except Exception as e:
-            fail("[1.2] _split_to_sentence_chunks", e)
+            fail("[1.2] split_to_sentence_chunks", e)
 
         # [1.3] одинаковое число предложений в обоих путях
         try:
-            rc = Pymorphy3Parser._split_to_chunks(MULTI, chunk_size=10)
-            nc = Pymorphy3Parser._split_to_sentence_chunks(MULTI, chunk_size=10)
+            rc = Pymorphy3Parser.split_to_chunks(multi_sample, chunk_size=10)
+            nc = Pymorphy3Parser.split_to_sentence_chunks(multi_sample, chunk_size=10)
             r_total = sum(len(c) for c in rc)
             n_total = sum(len(c) for c in nc)
             assert r_total == n_total, f"razdel={r_total}, native={n_total}"
@@ -361,20 +361,20 @@ if __name__ == "__main__":
         except Exception as e:
             fail("[1.3] Число предложений", e)
 
-        # [1.4] _merge_chunks
+        # [1.4] merge_chunks
         try:
             fake_sent = [{"id": 1, "form": "слово"}]
             chunk_results = [[fake_sent, fake_sent], [fake_sent]]
-            merged = Pymorphy3Parser._merge_chunks(chunk_results)
+            merged = Pymorphy3Parser.merge_chunks(chunk_results)
             assert len(merged) == 3, f"ожидалось 3, получено {len(merged)}"
-            ok("[1.4] _merge_chunks — склейка корректна")
+            ok("[1.4] merge_chunks — склейка корректна")
         except Exception as e:
-            fail("[1.4] _merge_chunks", e)
+            fail("[1.4] merge_chunks", e)
 
         # [1.5] chunk_size=0 → ValueError
         try:
             try:
-                Pymorphy3Parser._split_to_chunks("Текст.", chunk_size=0)
+                Pymorphy3Parser.split_to_chunks("Текст.", chunk_size=0)
                 fail("[1.5] chunk_size=0", "ValueError не выброшен")
             except ValueError as exc:
                 print(f"  Поймано: {exc!r}")
@@ -382,11 +382,11 @@ if __name__ == "__main__":
         except Exception as e:
             fail("[1.5] chunk_size ValueError", e)
 
+        parser_local = object.__new__(Pymorphy3Parser)
+        parser_local.logger = logging.getLogger("test")
+        parser_local.service = None
         # [1.6] невалидный output_format
         try:
-            parser_local = object.__new__(Pymorphy3Parser)
-            parser_local.logger = logging.getLogger("test")
-            parser_local.service = None
             try:
                 Pymorphy3Parser.parse_text(parser_local, "Текст.", output_format="conllu")
                 fail("[1.6] output_format=conllu", "ValueError не выброшен")
@@ -424,7 +424,7 @@ if __name__ == "__main__":
         print(f"[2] parse_text  (razdel + simplified, chunk_size={args.chunk_size})")
         print(sep)
         try:
-            result = parser.parse_text(TEXT, output_format="simplified",
+            result = parser.parse_text(text_sample, output_format="simplified",
                                        tokenizer="razdel", chunk_size=args.chunk_size)
             assert isinstance(result, list) and len(result) > 0
             for sent in result:
@@ -433,7 +433,7 @@ if __name__ == "__main__":
                 if roots:  # проверяем только если глагол найден
                     bad = [t for t in sent if t["head"] == 0 and t["deprel"] == "dep"]
                     assert bad == [], f"head=0 deprel=dep при наличии root: ..."
-            sentences = list(sentenize(TEXT))
+            sentences = list(sentenize(text_sample))
             for sent, s in zip(result, sentences):
                 print_simplified(sent, s.text)
                 print()
@@ -446,7 +446,7 @@ if __name__ == "__main__":
         print(f"[3] parse_text  (razdel + native, chunk_size={args.chunk_size})")
         print(sep)
         try:
-            result = parser.parse_text(TEXT, output_format="native",
+            result = parser.parse_text(text_sample, output_format="native",
                                        tokenizer="razdel", chunk_size=args.chunk_size)
             assert isinstance(result, list) and len(result) > 0
             for sent in result:
@@ -465,10 +465,10 @@ if __name__ == "__main__":
         print(f"[4] parse_text  (native + simplified, chunk_size={args.chunk_size})")
         print(sep)
         try:
-            result = parser.parse_text(TEXT, output_format="simplified",
+            result = parser.parse_text(text_sample, output_format="simplified",
                                        tokenizer="native", chunk_size=args.chunk_size)
             assert isinstance(result, list) and len(result) > 0
-            sentences = list(sentenize(TEXT))
+            sentences = list(sentenize(text_sample))
             for sent, s in zip(result, sentences):
                 print_simplified(sent, s.text)
                 print()
@@ -481,7 +481,7 @@ if __name__ == "__main__":
         print(f"[5] parse_text  (native + native, chunk_size={args.chunk_size})")
         print(sep)
         try:
-            result = parser.parse_text(TEXT, output_format="native",
+            result = parser.parse_text(text_sample, output_format="native",
                                        tokenizer="native", chunk_size=args.chunk_size)
             assert isinstance(result, list) and len(result) > 0
             for sent in result:
@@ -496,9 +496,9 @@ if __name__ == "__main__":
         print("[6] parse_text — chunk_size=1 совпадает с chunk_size=32")
         print(sep)
         try:
-            r1 = parser.parse_text(MULTI, output_format="simplified",
+            r1 = parser.parse_text(multi_sample, output_format="simplified",
                                     tokenizer="razdel", chunk_size=1)
-            r32 = parser.parse_text(MULTI, output_format="simplified",
+            r32 = parser.parse_text(multi_sample, output_format="simplified",
                                      tokenizer="razdel", chunk_size=32)
             assert len(r1) == len(r32), f"len: chunk=1 → {len(r1)}, chunk=32 → {len(r32)}"
             for s1, s32 in zip(r1, r32):
@@ -524,33 +524,33 @@ if __name__ == "__main__":
 
         # ── [8] parse_batch — razdel ──────────────────────────────────────────────
         print(f"\n{sep}")
-        print(f"[8] parse_batch  (razdel + simplified, {len(BATCH)} текста)")
+        print(f"[8] parse_batch  (razdel + simplified, {len(batch)} текста)")
         print(sep)
         try:
-            results = parser.parse_batch(BATCH, output_format="simplified",
+            results = parser.parse_batch(batch, output_format="simplified",
                                          tokenizer="razdel", chunk_size=args.chunk_size)
-            assert len(results) == len(BATCH), f"ожидалось {len(BATCH)}, получено {len(results)}"
-            for idx, (text, res) in enumerate(zip(BATCH, results), 1):
+            assert len(results) == len(batch), f"ожидалось {len(batch)}, получено {len(results)}"
+            for idx, (text, res) in enumerate(zip(batch, results), 1):
                 print(f"  Текст {idx}: {len(res)} предл.")
                 sentences = list(sentenize(text))
                 for sent, s in zip(res, sentences):
                     print_simplified(sent, s.text)
                 print()
-            ok(f"[8] parse_batch razdel/simplified — {len(BATCH)} текста")
+            ok(f"[8] parse_batch razdel/simplified — {len(batch)} текста")
         except Exception as e:
             fail("[8] parse_batch razdel", e)
 
         # ── [9] parse_batch — native ──────────────────────────────────────────────
         print(f"\n{sep}")
-        print(f"[9] parse_batch  (native + simplified, {len(BATCH)} текста)")
+        print(f"[9] parse_batch  (native + simplified, {len(batch)} текста)")
         print(sep)
         try:
-            results = parser.parse_batch(BATCH, output_format="simplified",
+            results = parser.parse_batch(batch, output_format="simplified",
                                          tokenizer="native", chunk_size=args.chunk_size)
-            assert len(results) == len(BATCH)
+            assert len(results) == len(batch)
             for idx, res in enumerate(results, 1):
                 print(f"  Текст {idx}: {len(res)} предл.")
-            ok(f"[9] parse_batch native/simplified — {len(BATCH)} текста")
+            ok(f"[9] parse_batch native/simplified — {len(batch)} текста")
         except Exception as e:
             fail("[9] parse_batch native", e)
 
@@ -559,9 +559,9 @@ if __name__ == "__main__":
         print("[10] parse_batch ≡ parse_text × N  (razdel, chunk_size=1)")
         print(sep)
         try:
-            batch = parser.parse_batch(BATCH, output_format="simplified",
+            batch = parser.parse_batch(batch, output_format="simplified",
                                        tokenizer="razdel", chunk_size=1)
-            for i, text in enumerate(BATCH):
+            for i, text in enumerate(batch):
                 single = parser.parse_text(text, output_format="simplified",
                                            tokenizer="razdel", chunk_size=1)
                 assert len(batch[i]) == len(single), \
@@ -570,7 +570,7 @@ if __name__ == "__main__":
                     fb = [t["form"] for t in sb]
                     fs = [t["form"] for t in ss]
                     assert fb == fs, f"текст {i+1}: forms differ: {fb} vs {fs}"
-            ok(f"[10] parse_batch ≡ parse_text × {len(BATCH)}")
+            ok(f"[10] parse_batch ≡ parse_text × {len(batch)}")
         except Exception as e:
             fail("[10] parse_batch vs parse_text", e)
 

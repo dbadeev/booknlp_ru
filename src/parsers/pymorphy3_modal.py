@@ -214,10 +214,12 @@ class Pymorphy3Service:
         Returns:
             List[List[Dict]]  — список предложений, каждое — список токенов
         """
+        from typing import Callable
+
         if output_format not in ("simplified", "native"):
             raise ValueError(f"Unknown output_format: {output_format!r}")
 
-        parse_fn = (
+        parse_fn: Callable[[List[str]], List[Dict[str, Any]]] = (
             self._parse_tokens_native if output_format == "native"
             else self._parse_tokens_simplified
         )
@@ -243,10 +245,12 @@ class Pymorphy3Service:
         Returns:
             List[List[Dict]]
         """
+        from typing import Callable
+
         if output_format not in ("simplified", "native"):
             raise ValueError(f"Unknown output_format: {output_format!r}")
 
-        parse_fn = (
+        parse_fn: Callable[[List[str]], List[Dict[str, Any]]] = (
             self._parse_tokens_native if output_format == "native"
             else self._parse_tokens_simplified
         )
@@ -267,10 +271,12 @@ class Pymorphy3Service:
     ) -> List[List[Dict[str, Any]]]:
         """Парсит текст целиком. Для local_entrypoint и прямых вызовов."""
         from razdel import sentenize
+        from typing import Callable
+
         if output_format not in ("simplified", "native"):
             raise ValueError(f"Unknown output_format: {output_format!r}")
 
-        parse_fn = (
+        parse_fn: Callable[[List[str]], List[Dict[str, Any]]] = (
             self._parse_tokens_native if output_format == "native"
             else self._parse_tokens_simplified
         )
@@ -304,34 +310,34 @@ def main():
 
     _HEADER = "ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL"
 
-    def print_simplified(sent, sent_text: str = ""):
-        if sent_text:
-            print(f"# text = {sent_text}")
+    def print_simplified(sentence, sentence_text: str = ""):
+        if sentence_text:
+            print(f"# text = {sentence_text}")
         print(_HEADER)
-        for tok in sent:
+        for token in sentence:
             fields = [
                 str(tok["id"]),
-                tok["form"],
-                tok["lemma"],
-                tok["upos"],
-                tok["xpos"],
-                tok["feats"],
-                str(tok["head"]),
-                tok["deprel"],
+                token["form"],
+                token["lemma"],
+                token["upos"],
+                token["xpos"],
+                token["feats"],
+                str(token["head"]),
+                token["deprel"],
             ]
             print("\t".join(fields))
 
-    def print_native(sent: List[Dict[str, Any]]) -> None:
-        for tok in sent:
-            print(f"ID: {tok['id']}")
-            print(f"  Word: {tok['word']}")
-            print(f"  Normal form: {tok['normal_form']}")
-            print(f"  Tag: {tok['tag']}")
-            print(f"  Score: {tok['score']}")
-            print(f"  Lexeme (forms): {tok['lexeme'][:3]}...")
-            print(f"  Methods stack: {tok['methods_stack']}")
-            print(f"  Is known: {tok['is_known']}")
-            print(f"  Normalized: {tok['normalized']}")
+    def print_native(sentence: List[Dict[str, Any]]) -> None:
+        for token in sentence:
+            print(f"ID: {token['id']}")
+            print(f"  Word: {token['word']}")
+            print(f"  Normal form: {token['normal_form']}")
+            print(f"  Tag: {token['tag']}")
+            print(f"  Score: {token['score']}")
+            print(f"  Lexeme (forms): {token['lexeme'][:3]}...")
+            print(f"  Methods stack: {token['methods_stack']}")
+            print(f"  Is known: {token['is_known']}")
+            print(f"  Normalized: {token['normalized']}")
             print()
 
     service = Pymorphy3Service()
@@ -349,15 +355,15 @@ def main():
         failed += 1
         print(f"  ❌  {name}: {err}")
 
-    TEXT  = "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
-    MULTI = "Зло пугает. Москва — столица России. Крупнейший город страны."
+    text_sample  = "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
+    multi_sample = "Зло пугает. Москва — столица России. Крупнейший город страны."
 
     # ── [1] parse_sentence_chunk — razdel path, simplified ────────────────────
     print(f"\n{sep}")
     print("[1] parse_sentence_chunk  (razdel path, simplified)")
     print(sep)
     try:
-        sentences = list(sentenize(MULTI))
+        sentences = list(sentenize(multi_sample))
         chunk = [(s.text, s.start) for s in sentences]
         result = service.parse_sentence_chunk.remote(chunk, output_format="simplified")
 
@@ -388,7 +394,7 @@ def main():
     print("[2] parse_sentence_chunk  (razdel path, native)")
     print(sep)
     try:
-        sentences = list(sentenize(TEXT))
+        sentences = list(sentenize(text_sample))
         chunk = [(s.text, s.start) for s in sentences]
         result = service.parse_sentence_chunk.remote(chunk, output_format="native")
 
@@ -413,7 +419,7 @@ def main():
     print("[3] parse_sentence_chunk_native  (native path, simplified)")
     print(sep)
     try:
-        sentences = list(sentenize(MULTI))
+        sentences = list(sentenize(multi_sample))
         chunk_texts = [s.text for s in sentences]
         result = service.parse_sentence_chunk_native.remote(
             chunk_texts, output_format="simplified"
@@ -435,7 +441,7 @@ def main():
     print("[4] parse_sentence_chunk_native  (native path, native)")
     print(sep)
     try:
-        sentences = list(sentenize(TEXT))
+        sentences = list(sentenize(text_sample))
         chunk_texts = [s.text for s in sentences]
         result = service.parse_sentence_chunk_native.remote(
             chunk_texts, output_format="native"
@@ -456,10 +462,10 @@ def main():
     print("[5] Проверка символьных офсетов (razdel path)")
     print(sep)
     try:
-        sentences = list(sentenize(MULTI))
+        sentences = list(sentenize(multi_sample))
         chunk = [(s.text, s.start) for s in sentences]
         for sent_text, start in chunk:
-            assert MULTI[start:start + len(sent_text)] == sent_text, \
+            assert multi_sample[start:start + len(sent_text)] == sent_text, \
                 f"Офсет {start} не совпадает с текстом {sent_text!r}"
             print(f"  offset={start:3d}  text={sent_text!r}")
         ok("Символьные офсеты корректны")
