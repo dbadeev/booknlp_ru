@@ -136,7 +136,7 @@ class Pymorphy3Parser:
         Алгоритм:
           1. Разбить текст на предложения (razdel.sentenize).
           2. Сгруппировать в чанки по chunk_size.
-          3. Один чанк → .remote(); несколько → .map() (параллельно).
+          3. Отправить чанки в Modal через .map().
           4. Склеить результаты.
 
         Args:
@@ -578,14 +578,17 @@ if __name__ == "__main__":
         print(f"\n{sep}")
         print("[11] parse_batch со смешанными пустыми/непустыми текстами")
         print(sep)
-        mixed = ["", "Зло пугает.", ""]
-        results_mixed = parser.parse_batch(mixed, output_format="simplified",
-                                           tokenizer="razdel", chunk_size=args.chunk_size)
-        assert len(results_mixed) == 3
-        assert results_mixed[0] == []
-        assert len(results_mixed[1]) > 0
-        assert results_mixed[2] == []
-        ok("[11] parse_batch с пустыми текстами в батче")
+        try:
+            mixed = ["", "Зло пугает.", ""]
+            results_mixed = parser.parse_batch(mixed, output_format="simplified",
+                                               tokenizer="razdel", chunk_size=args.chunk_size)
+            assert len(results_mixed) == 3
+            assert results_mixed[0] == [], f"текст 1: ожидался [], получено {results_mixed[0]!r}"
+            assert len(results_mixed[1]) > 0, f"текст 2: ожидался непустой результат"
+            assert results_mixed[2] == [], f"текст 3: ожидался [], получено {results_mixed[2]!r}"
+            ok("[11] parse_batch с пустыми текстами в батче")
+        except Exception as e:
+            fail("[11] parse_batch с пустыми текстами", e)
 
     # ── Итог ──────────────────────────────────────────────────────────────────
         total = passed + failed
