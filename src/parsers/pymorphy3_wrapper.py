@@ -80,8 +80,9 @@ class Pymorphy3Parser:
         Returns:
             List[List[(sentence_text, start_char_in_original)]]
 
-        base_offset — смещение text внутри большего документа
-                      (используется в parse_batch).
+            base_offset — смещение text внутри большего документа.
+                          Не используется в parse_batch (каждый текст независим,
+                          офсеты относительны начала каждого текста).
         """
         if chunk_size <= 0:
             raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
@@ -272,6 +273,7 @@ if __name__ == "__main__":
           [8] parse_batch — razdel path
           [9] parse_batch — native path
           [10] parse_batch — результат совпадает с parse_text по одному
+          [11] parse_batch - со смешанными пустыми/непустыми текстами
         ...
         """
 
@@ -453,6 +455,7 @@ if __name__ == "__main__":
                     assert 0.0 <= tok["score"] <= 1.0
             for sent in result:
                 print_native(sent)
+                print()
             ok("[3] parse_text razdel/native")
         except Exception as e:
             fail("[3] parse_text razdel/native", e)
@@ -483,6 +486,7 @@ if __name__ == "__main__":
             assert isinstance(result, list) and len(result) > 0
             for sent in result:
                 print_native(sent)
+                print()
             ok("[5] parse_text native/native")
         except Exception as e:
             fail("[5] parse_text native/native", e)
@@ -569,6 +573,19 @@ if __name__ == "__main__":
             ok(f"[10] parse_batch ≡ parse_text × {len(BATCH)}")
         except Exception as e:
             fail("[10] parse_batch vs parse_text", e)
+
+        # ── [11] parse_batch со смешанными пустыми/непустыми текстами ────────────────────────────────────
+        print(f"\n{sep}")
+        print("[10] parse_batch со смешанными пустыми/непустыми текстами")
+        print(sep)
+        mixed = ["", "Зло пугает.", ""]
+        results_mixed = parser.parse_batch(mixed, output_format="simplified",
+                                           tokenizer="razdel", chunk_size=args.chunk_size)
+        assert len(results_mixed) == 3
+        assert results_mixed[0] == []
+        assert len(results_mixed[1]) > 0
+        assert results_mixed[2] == []
+        ok("[11] parse_batch с пустыми текстами в батче")
 
     # ── Итог ──────────────────────────────────────────────────────────────────
         total = passed + failed
