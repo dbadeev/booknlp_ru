@@ -114,6 +114,7 @@ class CobaldParser:
         if not chunks:
             return []
 
+        self.logger.info(f"Отправляем {len(chunks)} чанков в Modal...")
         try:
             chunk_results = list(
                 self.service.parse_sentence_chunk.map(
@@ -123,14 +124,14 @@ class CobaldParser:
             )
             return self.merge_chunks(chunk_results)
         except Exception as e:
-            self.logger.error(f"❌ Ошибка при разборе текста: {e}")
+            self.logger.error(f"❌ Ошибка при разборе текста:Упал чанк (всего {len(chunks)}): {e}")
             raise
 
     def parse_batch(
             self,
             texts: List[str],
             output_format: OutputFormat = "dict",
-            chunk_size: int = SENTENCE_CHUNK_SIZE,
+            chunk_size: int = None,
     ) -> List[List[List[Dict[str, Any]]]]:
         """
         Пакетная обработка списка текстов.
@@ -143,7 +144,9 @@ class CobaldParser:
         List[List[List[Dict]]]
             Для каждого текста — список предложений.
         """
-        if output_format not in ("dict", "native"):
+        if chunk_size is None:
+            chunk_size = self.SENTENCE_CHUNK_SIZE
+        if output_format not in ("dict", "native", "conllu"):
             raise ValueError(f"Unknown output_format: {output_format!r}")
         if not texts:
             return []
@@ -161,6 +164,9 @@ class CobaldParser:
 
         if not all_chunks:
             return [[] for _ in texts]
+
+
+
 
         try:
             # Один .map() → Modal параллелит все чанки
@@ -266,7 +272,9 @@ def _to_conllu_str(sentences: List[List[Dict[str, Any]]]) -> str:
             # ── Enhanced UD (DEPS, 9-я колонка) ─────────────────────────────
             deps_eud = _dep_tuple_to_str(tok.get("deps_eud"))
 
+            tok_id = tok.get("id", "_")
             line = "\t".join([
+                str(tok_id),
                 str(tok["id"]),
                 tok.get("form", "_"),
                 tok.get("lemma", "_") or "_",   # только в native

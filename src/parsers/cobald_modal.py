@@ -88,8 +88,10 @@ def _to_conllu_str(sentences: List[List[Dict[str, Any]]]) -> str:
                 misc_parts.append(f"Semclass={semclass}")
             misc_str = "|".join(misc_parts) if misc_parts else "_"
             deps_eud = _dep_tuple_to_str(tok.get("deps_eud"))
+
+            tok_id = tok.get("id", "_")
             line = "\t".join([
-                str(tok["id"]),
+                str(tok_id),
                 tok.get("form",   "_"),
                 tok.get("lemma",  "_") or "_",
                 tok.get("upos",   "_") or "_",
@@ -156,7 +158,7 @@ class CobaldService:
         self.pipeline = ConlluTokenClassificationPipeline(
             model=model,
             tokenizer=lambda text: [tok.text for tok in razdel_tokenize(text)],
-            sentenizer=lambda text: [sent.text for sent in sentenize(text)],
+            sentenizer=lambda text: [sent.text for sent in self.sentenize(text)],
         )
         self.vocab = config.vocabulary
         self.logger.info(f"CoBaLD pipeline loaded on {self.device}!")
@@ -318,7 +320,7 @@ class CobaldService:
         if output_format not in ("dict", "native", "conllu"):
             raise ValueError(
                 f"Неизвестный output_format={output_format!r}. "
-                "Допустимые значения: 'dict', 'native', conllu'."
+                "Допустимые значения: 'dict', 'native', 'conllu'."
             )
         result = []
         for sent_text in sentences:
@@ -444,6 +446,10 @@ class CobaldService:
         n_ref = len(sentence_data["words"])
 
         deps_ud = list(sentence_data["deps_ud"])
+        if len(deps_ud) < n_ref:
+            self.logger.warning(
+                f"deps_ud короче words ({len(deps_ud)} vs {n_ref}), дополняем defaults"
+            )
         while len(deps_ud) < n_ref:
             deps_ud.append(("0", str(len(deps_ud) + 1), "_"))
 
@@ -665,13 +671,13 @@ def main():
         try:
             service.parse_sentence_chunk.remote(["Текст."], output_format="some_invalid_format")
             fail("[4] ValueError не выброшен", "исключение не возникло")
-        except (ValueError, Exception) as exc:
+        except ValueError as exc:
             assert "output_format" in str(exc).lower() or "some_invalid_format" in str(exc).lower() \
                    or "unknown" in str(exc).lower(), f"Неожиданное сообщение: {exc}"
             print(f"  Поймано: {exc!r}")
             ok("[4] Неверный output_format → ValueError")
     except Exception as e:
-        fail("[4] ValueError", e)
+        fail("[4]  ", f"{type(e).__name__}: {e}")
 
     # ── [5] parse (backward compat) ──────────────────────────────────────────
     print(f"\n{sep}")
