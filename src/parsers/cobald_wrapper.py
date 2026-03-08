@@ -105,7 +105,7 @@ class CobaldParser:
         List[List[Dict]]
             Список предложений; каждое — список токенов.
         """
-        if output_format not in ("dict", "native"):
+        if output_format not in ("dict", "native", "conllu"):
             raise ValueError(f"Unknown output_format: {output_format!r}")
         if not text or not text.strip():
             return []
@@ -388,7 +388,7 @@ if __name__ == "__main__":
     )
 
     ap = argparse.ArgumentParser(description="CoBaLD wrapper тест")
-    ap.add_argument("--output-format", choices=["dict", "native"],
+    ap.add_argument("--output-format", choices=["dict", "native", "conllu"],
                     default="dict", dest="output_format")
     ap.add_argument("--chunk-size", type=int,
                     default=CobaldParser.SENTENCE_CHUNK_SIZE, dest="chunk_size")
@@ -472,8 +472,8 @@ if __name__ == "__main__":
         parser_stub.service = None
         try:
             try:
-                CobaldParser.parse_text(parser_stub, "Текст.", output_format="conllu")  # type: ignore
-                fail("[1.5] output_format=conllu", "ValueError не выброшен")
+                CobaldParser.parse_text(parser_stub, "Текст.", output_format="some_invalid_format")  # type: ignore
+                fail("[1.5] output_format=some_invalid_format", "ValueError не выброшен")
             except ValueError as exc:
                 print(f"  Поймано: {exc!r}")
                 ok("[1.5] output_format неверный → ValueError")

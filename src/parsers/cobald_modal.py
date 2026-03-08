@@ -527,7 +527,7 @@ class CobaldService:
                 "feats": feats,
                 "head": int(id_mapping.get(head_orig, 0)),
                 "deprel": deprel,
-                "deps_eud": deps_eud,
+                "deps_eud": deps_eud_item,
                 "misc": misc,
                 "deepslot": deepslot,
                 "semclass": semclass,
@@ -709,10 +709,10 @@ def main():
     print(sep)
     try:
         try:
-            service.parse_sentence_chunk.remote(["Текст."], output_format="conllu")
+            service.parse_sentence_chunk.remote(["Текст."], output_format="some_invalid_format")
             fail("[4] ValueError не выброшен", "исключение не возникло")
         except (ValueError, Exception) as exc:
-            assert "output_format" in str(exc).lower() or "conllu" in str(exc).lower() \
+            assert "output_format" in str(exc).lower() or "some_invalid_format" in str(exc).lower() \
                    or "unknown" in str(exc).lower(), f"Неожиданное сообщение: {exc}"
             print(f"  Поймано: {exc!r}")
             ok("[4] Неверный output_format → ValueError")
