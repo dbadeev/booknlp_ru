@@ -52,7 +52,7 @@ class CobaldParser:
 
     # ─────────────────────── ВСПОМОГАТЕЛЬНЫЕ МЕТОДЫ ─────────────────────────────
     @staticmethod
-    def _split_to_sentence_chunks(
+    def split_to_sentence_chunks(
             text: str,
             chunk_size: int,
     ) -> List[List[str]]:
@@ -73,7 +73,7 @@ class CobaldParser:
         ]
 
     @staticmethod
-    def _merge_chunks(
+    def merge_chunks(
             chunk_results: List[List[List[Any]]],
     ) -> List[List[Dict[str, Any]]]:
         """Собирает результаты чанков в плоский список предложений."""
@@ -110,7 +110,7 @@ class CobaldParser:
         if not text or not text.strip():
             return []
 
-        chunks = self._split_to_sentence_chunks(text, chunk_size)
+        chunks = self.split_to_sentence_chunks(text, chunk_size)
         if not chunks:
             return []
 
@@ -121,7 +121,7 @@ class CobaldParser:
                     kwargs={"output_format": output_format},
                 )
             )
-            return self._merge_chunks(chunk_results)
+            return self.merge_chunks(chunk_results)
         except Exception as e:
             self.logger.error(f"❌ Ошибка при разборе текста: {e}")
             raise
@@ -155,7 +155,7 @@ class CobaldParser:
             if not text or not text.strip():
                 chunks_per_text.append(0)
                 continue
-            text_chunks = self._split_to_sentence_chunks(text, chunk_size)
+            text_chunks = self.split_to_sentence_chunks(text, chunk_size)
             chunks_per_text.append(len(text_chunks))
             all_chunks.extend(text_chunks)
 
@@ -182,7 +182,7 @@ class CobaldParser:
                 results.append([])
             else:
                 results.append(
-                    self._merge_chunks(all_results[offset: offset + n_chunks])
+                    self.merge_chunks(all_results[offset: offset + n_chunks])
                 )
                 offset += n_chunks
         return results
@@ -397,9 +397,9 @@ if __name__ == "__main__":
         """
         Тест-секции:
         [1]   Chunking (локально, без Modal)
-        [1.1] _split_to_sentence_chunks: правильное число предложений
-        [1.2] _split_to_sentence_chunks: chunk_size=1 → каждое предл. отдельно
-        [1.3] _merge_chunks: склейка корректна
+        [1.1] split_to_sentence_chunks: правильное число предложений
+        [1.2] split_to_sentence_chunks: chunk_size=1 → каждое предл. отдельно
+        [1.3] merge_chunks: склейка корректна
         [1.4] chunk_size=0 → ValueError
         [1.5] output_format неверный → ValueError
         [2]   parse_text — dict
@@ -430,35 +430,35 @@ if __name__ == "__main__":
 
         # [1.1]
         try:
-            chunks = CobaldParser._split_to_sentence_chunks(multi_sample, chunk_size=10)
+            chunks = CobaldParser.split_to_sentence_chunks(multi_sample, chunk_size=10)
             total_sents = sum(len(c) for c in chunks)
             assert total_sents == 3, f"ожидалось 3 предл., получено {total_sents}"
-            ok(f"[1.1] _split_to_sentence_chunks — {total_sents} предл., chunk_size=10")
+            ok(f"[1.1] split_to_sentence_chunks — {total_sents} предл., chunk_size=10")
         except Exception as e:
-            fail("[1.1] _split_to_sentence_chunks", e)
+            fail("[1.1] split_to_sentence_chunks", e)
 
         # [1.2]
         try:
-            chunks = CobaldParser._split_to_sentence_chunks(multi_sample, chunk_size=1)
+            chunks = CobaldParser.split_to_sentence_chunks(multi_sample, chunk_size=1)
             assert len(chunks) == 3, f"ожидалось 3 чанка, получено {len(chunks)}"
             assert all(len(c) == 1 for c in chunks), "каждый чанк должен содержать 1 предл."
-            ok("[1.2] _split_to_sentence_chunks chunk_size=1 — по одному предл. в чанке")
+            ok("[1.2] split_to_sentence_chunks chunk_size=1 — по одному предл. в чанке")
         except Exception as e:
             fail("[1.2] chunk_size=1", e)
 
         # [1.3]
         try:
             fake = [{"id": 1, "form": "слово"}]
-            merged = CobaldParser._merge_chunks([[fake, fake], [fake]])
+            merged = CobaldParser.merge_chunks([[fake, fake], [fake]])
             assert len(merged) == 3, f"ожидалось 3, получено {len(merged)}"
-            ok("[1.3] _merge_chunks — склейка корректна")
+            ok("[1.3] merge_chunks — склейка корректна")
         except Exception as e:
-            fail("[1.3] _merge_chunks", e)
+            fail("[1.3] merge_chunks", e)
 
         # [1.4]
         try:
             try:
-                CobaldParser._split_to_sentence_chunks("Текст.", chunk_size=0)
+                CobaldParser.split_to_sentence_chunks("Текст.", chunk_size=0)
                 fail("[1.4] chunk_size=0", "ValueError не выброшен")
             except ValueError as exc:
                 print(f"  Поймано: {exc!r}")
@@ -487,7 +487,6 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"\n⚠️ Modal-сервис недоступен: {e}")
             print("Запустите: modal deploy src/parsers/cobald_modal.py")
-            total = passed + failed
             print(f"\n── Локальные тесты: {passed} ✅  Modal-тесты: пропущены")
             sys.exit(1)
 
@@ -511,6 +510,8 @@ if __name__ == "__main__":
             ok(f"[2] parse_text / dict — {len(result)} предл.")
         except Exception as e:
             fail("[2] parse_text / dict", e)
+
+        result_native = []
 
         # ── [3] parse_text — native ──────────────────────────────────────────
         print(f"\n{sep}\n[3] parse_text (native, chunk_size={args.chunk_size})\n{sep}")

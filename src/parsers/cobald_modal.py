@@ -269,52 +269,6 @@ class CobaldService:
 
         return all_results
 
-    # def _parse_batch_impl(
-    #     self,
-    #     texts: List[str],
-    #     output_format: str = "dict",
-    # ) -> List[List[Any]]:
-    #     """
-    #     Внутренняя реализация: разбирает список текстов.
-    #
-    #     Returns
-    #     -------
-    #     List[List[sentence]]
-    #         Для каждого входного текста — список предложений.
-    #     """
-    #     if output_format not in ("dict", "native"):
-    #         raise ValueError(
-    #             f"Неизвестный output_format={output_format!r}. "
-    #             "Допустимые значения: 'dict', 'native'."
-    #         )
-    #
-    #     all_results = []
-    #     for text in texts:
-    #         # FIX P3: pipeline получает сырой текст и сам токенизирует razdel-ом.
-    #         # Оригинал принимал List[str] (токены) и делал " ".join(tokens),
-    #         # что создавало тройную токенизацию:
-    #         #   1. wrapper: razdel_tokenize(text) → tokens
-    #         #   2. modal:   " ".join(tokens) → text (с потерей границ!)
-    #         #   3. pipeline: razdel внутри preprocess() → новые токены
-    #         # Пример потери: ["Кружка-термос"] → join → pipeline razdel
-    #         #   → ["Кружка", "-", "термос"] (другой результат!)
-    #         if not text or not text.strip():
-    #             all_results.append([])
-    #             continue
-    #         decoded_sentences = self.pipeline(text, output_format="list")
-    #
-    #         # FIX P4: обрабатываем ВСЕ предложения текста, не только [0].
-    #         # Оригинал: sentence_data = decoded_sentences[0]
-    #         # При нескольких предложениях в тексте остальные молча терялись.
-    #         text_results = []
-    #         for sentence_data in decoded_sentences:
-    #             if output_format == "native":
-    #                 text_results.append(self._format_native_output(sentence_data))
-    #             else:
-    #                 text_results.append(self._build_dict(sentence_data))
-    #         all_results.append(text_results)
-    #     return all_results
-
     @modal.method()
     def parse_batch(
         self,
