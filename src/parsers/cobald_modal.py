@@ -33,11 +33,21 @@ app    = modal.App("booknlp-ru-cobald")
 @app.cls(image=image, gpu="T4", timeout=600)
 class CobaldService:
     """
-    Сервис синтаксического разбора на основе CoBaLD-парсера.
+        Сервис синтаксического разбора на основе CoBaLD-парсера.
 
-    Принимает сырые тексты (str), токенизация выполняется внутри pipeline.
-    Два формата вывода: 'dict' (CoNLL-U + CoBaLD поля) и 'native' (полный).
-    """
+        Принимает сырые тексты (str), токенизация и сентенизация выполняются
+        внутри pipeline (razdel).
+
+        Форматы вывода
+        --------------
+        'dict'   : CoNLL-U поля (id, form, head, deprel, misc) + CoBaLD-поля
+                   (deepslot, semclass). Используется для downstream-задач.
+        'native' : Полный набор полей включая lemma, upos, xpos, feats,
+                   deps_eud, is_null. Используется когда нужны все атрибуты.
+
+        Конвертация в CoNLL-U строку не входит в функционал сервиса —
+        она выполняется на стороне клиента (cobald_wrapper.py :: _to_conllu_str).
+        """
 
     @modal.enter()
     def setup(self):
@@ -521,6 +531,18 @@ def main():
                             "deepslot", "semclass", "is_null"):
                     assert key in tok, f"ключ {key!r} отсутствует в native"
                 assert tok["is_null"] is False
+        sent0 = result[0]
+        print(f"  Предложение 1 ({len(sent0)} токенов):")
+        print(f"  {'ID':<5} {'FORM':<16} {'LEMMA':<16} {'UPOS':<10} "
+              f"{'HEAD':<6} {'DEPREL':<14} {'DEEPSLOT':<22} {'SEMCLASS':<30} MISC")
+        print(f"  {'-' * 120}")
+        for tok in sent0:
+            print(
+                f"  {tok['id']:<5} {tok['form']:<16} {tok['lemma']:<16} "
+                f"{tok['upos']:<10} {tok['head']:<6} {tok['deprel']:<14} "
+                f"{tok['deepslot']:<22} {tok['semclass']:<30} "
+                f"{tok.get('misc') or '_'}"
+            )
         print(f"  Ключи токена: {list(result[0][0].keys())}")
         ok("[2] parse_sentence_chunk / native — структура корректна")
     except Exception as e:

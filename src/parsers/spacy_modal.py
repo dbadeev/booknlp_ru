@@ -93,6 +93,16 @@ class SpacyService:
             }
             self.nlp.add_pipe("conll_formatter", config=config, last=True)
 
+        # Отключаем senter/sentencizer: каждый doc уже содержит ровно одно
+        # предложение (сентенизация выполнена снаружи — razdel или wrapper).
+        # Без этого spaCy может пересентенизировать doc, что сломает:
+        #   - нумерацию токенов в _format_native
+        #   - разбивку на .sents в spacy-conll (_format_conllu)
+        for pipe_name in ("senter", "sentencizer"):
+            if pipe_name in self.nlp.pipe_names:
+                self.nlp.remove_pipe(pipe_name)
+                self.logger.info(f"Removed pipe: {pipe_name}")
+
         self.logger.info("SpaCy loaded (ru_core_news_lg)!")
         self.logger.info(f"Pipeline components: {self.nlp.pipe_names}")
         self.logger.info("Tokenizers: internal (spaCy rule-based), razdel (ML)")
@@ -214,6 +224,111 @@ class SpacyService:
         return result
 
     @staticmethod
+    def format_native(doc, char_offset: int = 0) -> List[Dict[str, Any]]:
+        """
+        Форматирует spaCy Doc в List[SentenceDict].
+
+        Doc считается одним предложением — сентенизация уже выполнена снаружи
+        (razdel в wrapper или split_to_sentence_chunks).
+        Итерация по doc.sents намеренно не используется во избежание
+        рассинхронизации с внешней сентенизацией.
+
+        Args:
+            doc:         spaCy Doc (одно предложение)
+            char_offset: смещение символов относительно исходного текста
+                         (передаётся из parse_sentence_chunk для razdel-пути)
+        Returns:
+            List с одним SentenceDict, или [] если doc пустой
+        """
+        tokens = list(doc)
+        if not tokens:
+            return []
+
+        words: List[Dict[str, Any]] = []
+
+        for token in tokens:
+            morph_str = str(token.morph) if token.morph.to_dict() else ""
+
+            word_dict: Dict[str, Any] = {
+                # Позиция в предложении (1-based, CoNLL-совместимо)
+                "id": token.i + 1,
+                "start_char": token.idx + char_offset,
+                "end_char": token.idx + len(token.text) + char_offset,
+
+                # Формы
+                "form": token.text,
+                "norm": token.norm_,
+                "lower": token.lower_,
+                "shape": token.shape_,
+
+                # Морфология
+                "lemma": token.lemma_,
+                "upos": token.pos_,
+                "xpos": token.tag_,
+                "feats": morph_str,
+
+                # Синтаксис
+                # head=0 означает root (токен указывает на себя)
+                "head": token.head.i + 1 if token.head.i != token.i else 0,
+                "deprel": token.dep_,
+                "nlefts": token.n_lefts,
+                "nrights": token.n_rights,
+                "children": [c.i + 1 for c in token.children],
+
+                # NER
+                "ent_type": token.ent_type_ or None,
+                "ent_iob": token.ent_iob_ if token.ent_iob_ != "O" else None,
+
+                # Границы предложений
+                # Для первого токена всегда True (doc = одно предложение)
+                "is_sent_start": token.i == 0,
+
+                # Пробелы / CoNLL misc
+                "whitespace": token.whitespace_,
+                "misc": "SpaceAfter=No" if not token.whitespace_ else "",
+
+                # Булевы флаги
+                "is_alpha": token.is_alpha,
+                "is_digit": token.is_digit,
+                "is_punct": token.is_punct,
+                "is_space": token.is_space,
+                "is_stop": token.is_stop,
+                "is_oov": token.is_oov,
+                "like_num": token.like_num,
+                "like_url": token.like_url,
+                "like_email": token.like_email,
+
+                # Векторы
+                "has_vector": token.has_vector,
+                "cluster": token.cluster,
+                "vector_norm": round(float(token.vector_norm), 6) if token.has_vector else None,
+            }
+            words.append(word_dict)
+
+        # NER на уровне предложения — из doc.ents
+        entities: List[Dict[str, Any]] = [
+            {
+                "text": ent.text,
+                "start": ent.start,  # индекс первого токена сущности в doc
+                "end": ent.end,  # индекс после последнего токена
+                "label": ent.label_,
+                "start_char": ent.start_char + char_offset,
+                "end_char": ent.end_char + char_offset,
+            }
+            for ent in doc.ents
+        ]
+
+        sent_data: Dict[str, Any] = {
+            "text": doc.text,
+            "start_char": tokens[0].idx + char_offset,
+            "end_char": tokens[-1].idx + len(tokens[-1].text) + char_offset,
+            "words": words,
+            "entities": entities,
+        }
+
+        return [sent_data]
+
+    @staticmethod
     def _format_conllu(doc) -> str:
         """CoNLL-U через spacy-conll (doc._.conll_str заполняется в pipeline)."""
         # noinspection PyProtectedMember
@@ -259,7 +374,7 @@ class SpacyService:
 
         result = []
         for doc, char_offset in zip(docs, char_offsets):
-            result.extend(self._format_native(doc, char_offset=char_offset))
+            result.extend(self.format_native(doc, char_offset=char_offset))
         return result
 
     @modal.method()
@@ -294,7 +409,10 @@ class SpacyService:
 
         result = []
         for doc in docs:
-            result.extend(self._format_native(doc))
+            # char_offset=0: native-путь получает уже разбитые предложения
+            # без информации об исходных смещениях — это осознанное ограничение.
+            # startChar/endChar токенов будут относительны начала каждого предложения.
+            result.extend(self.format_native(doc, char_offset=0))
         return result
 
     # ─── Backward compat / local_entrypoint ──────────────────────────────────

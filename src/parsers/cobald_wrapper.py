@@ -216,14 +216,28 @@ def _to_conllu_str(sentences: List[List[Dict[str, Any]]]) -> str:
     """
     Конвертирует список предложений в native-формате в строку CoNLL-U.
 
+    ВАЖНО: Конвертация в CoNLL-U выполняется исключительно на стороне
+    wrapper (локально). Modal-сервис (CobaldService) возвращает только
+    'dict' или 'native' форматы — CoNLL-U в его функционал не входит.
+
     Поля CoNLL-U (10 колонок, разделитель TAB):
         ID  FORM  LEMMA  UPOS  XPOS  FEATS  HEAD  DEPREL  DEPS  MISC
 
     CoBaLD-специфичные поля deepslot и semclass добавляются в MISC:
         SpaceAfter=No|Deepslot=Agent|Semclass=BEING
 
-    Требует native-формата (нужны lemma, upos, xpos, feats, deps_eud).
-    При dict-формате LEMMA/UPOS/XPOS/FEATS/DEPS будут '_'.
+    Требует output_format='native' (нужны lemma, upos, xpos, feats, deps_eud).
+    При output_format='dict' колонки LEMMA/UPOS/XPOS/FEATS/DEPS будут '_'.
+
+    Parameters
+    ----------
+    sentences : List[List[Dict[str, Any]]]
+        Результат parse_text(..., output_format='native').
+
+    Returns
+    -------
+    str
+        Строка в формате CoNLL-U, готовая к записи в файл или печати.
     """
     lines = []
     for sent_idx, snt in enumerate(sentences, 1):
