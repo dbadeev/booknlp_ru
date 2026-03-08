@@ -32,7 +32,7 @@ from razdel import sentenize
 
 import modal
 
-OutputFormat = Literal["dict", "native"]
+OutputFormat = Literal["dict", "native", "conllu"]
 
 
 class CobaldParser:
@@ -238,6 +238,9 @@ def _to_conllu_str(sentences: List[List[Dict[str, Any]]]) -> str:
     -------
     str
         Строка в формате CoNLL-U, готовая к записи в файл или печати.
+
+    ВАЖНО: Зеркало на стороне сервиса: cobald_modal.py :: _to_conllu_str
+    При изменении логики — синхронизировать оба файла.
     """
     lines = []
     for sent_idx, snt in enumerate(sentences, 1):

@@ -29,25 +29,102 @@ image = (
 
 app    = modal.App("booknlp-ru-cobald")
 
+# ──────────────────────────────────────────────────────────────────────────
+# CoNLL-U утилиты (используются внутри сервиса для output_format='conllu').
+# Зеркало на стороне клиента: cobald_wrapper.py :: _to_conllu_str
+# ──────────────────────────────────────────────────────────────────────────
+
+def _dep_tuple_to_str(dep: Any) -> str:
+    """
+    Конвертирует deps_eud в строку CoNLL-U формата head:deprel.
+      - tuple 3: ('head', 'self_id', 'deprel') → 'head:deprel'
+      - tuple 2: ('head', 'deprel')             → 'head:deprel'
+      - str                                     → как есть
+      - None / '_'                              → '_'
+    """
+    if dep is None:
+        return "_"
+    if isinstance(dep, str):
+        return dep.strip() or "_"
+    if isinstance(dep, (list, tuple)):
+        if len(dep) == 3:
+            return f"{dep[0]}:{dep[2]}"
+        if len(dep) == 2:
+            return f"{dep[0]}:{dep[1]}"
+    return "_"
+
+
+def _to_conllu_str(sentences: List[List[Dict[str, Any]]]) -> str:
+    """
+    Конвертирует список предложений в native-формате в строку CoNLL-U.
+
+    Поля CoNLL-U (10 колонок, разделитель TAB):
+        ID  FORM  LEMMA  UPOS  XPOS  FEATS  HEAD  DEPREL  DEPS_EUD  MISC
+
+    CoBaLD-поля deepslot и semclass добавляются в MISC:
+        SpaceAfter=No|Deepslot=Agent|Semclass=BEING
+
+    Требует native-формата (lemma, upos, xpos, feats, deps_eud).
+
+    Зеркало на стороне клиента: cobald_wrapper.py :: _to_conllu_str.
+    При изменении логики — синхронизировать оба файла.
+    """
+    lines = []
+    for sent_idx, snt in enumerate(sentences, 1):
+        if not snt:
+            continue
+        lines.append(f"# sent_id = {sent_idx}")
+        lines.append(f"# text = {' '.join(t.get('form', '') for t in snt)}")
+        for tok in snt:
+            misc_parts = []
+            raw_misc = (tok.get("misc") or "").strip()
+            if raw_misc and raw_misc != "_":
+                misc_parts.append(raw_misc)
+            deepslot = (tok.get("deepslot") or "").strip()
+            semclass  = (tok.get("semclass")  or "").strip()
+            if deepslot and deepslot != "_":
+                misc_parts.append(f"Deepslot={deepslot}")
+            if semclass and semclass != "_":
+                misc_parts.append(f"Semclass={semclass}")
+            misc_str = "|".join(misc_parts) if misc_parts else "_"
+            deps_eud = _dep_tuple_to_str(tok.get("deps_eud"))
+            line = "\t".join([
+                str(tok["id"]),
+                tok.get("form",   "_"),
+                tok.get("lemma",  "_") or "_",
+                tok.get("upos",   "_") or "_",
+                tok.get("xpos",   "_") or "_",
+                tok.get("feats",  "_") or "_",
+                str(tok.get("head", 0)),
+                tok.get("deprel", "_") or "_",
+                deps_eud,
+                misc_str,
+            ])
+            lines.append(line)
+        lines.append("")
+    return "\n".join(lines)
 
 @app.cls(image=image, gpu="T4", timeout=600)
 class CobaldService:
     """
-        Сервис синтаксического разбора на основе CoBaLD-парсера.
+    Сервис синтаксического разбора на основе CoBaLD-парсера.
 
-        Принимает сырые тексты (str), токенизация и сентенизация выполняются
-        внутри pipeline (razdel).
+    Принимает чанки предложений (List[str]), уже нарезанных на стороне
+    wrapper (cobald_wrapper.py) с помощью razdel.sentenize.
+    Сентенизация и chunking выполняются исключительно в wrapper —
+    сервис получает готовые предложения и не занимается разбивкой текста.
 
-        Форматы вывода
-        --------------
-        'dict'   : CoNLL-U поля (id, form, head, deprel, misc) + CoBaLD-поля
-                   (deepslot, semclass). Используется для downstream-задач.
-        'native' : Полный набор полей включая lemma, upos, xpos, feats,
-                   deps_eud, is_null. Используется когда нужны все атрибуты.
+    Форматы вывода
+    --------------
+    'dict'   : CoNLL-U поля (id, form, head, deprel, misc) + CoBaLD-поля
+               (deepslot, semclass).
+    'native' : Полный набор полей: lemma, upos, xpos, feats, deps_eud,
+               is_null — плюс все поля 'dict'.
+    'conllu' : Строка в формате CoNLL-U (10 TAB-колонок, sent_id, text).
+               Формируется из native-результата внутри сервиса.
+               Зеркало: cobald_wrapper.py :: _to_conllu_str.
+    """
 
-        Конвертация в CoNLL-U строку не входит в функционал сервиса —
-        она выполняется на стороне клиента (cobald_wrapper.py :: _to_conllu_str).
-        """
 
     @modal.enter()
     def setup(self):
@@ -129,29 +206,67 @@ class CobaldService:
             texts: List[str],
             output_format: str = "dict",
     ) -> List[List[Any]]:
-        if output_format not in ("dict", "native"):
+        """
+        Внутренняя реализация пакетного разбора списка текстов.
+
+        Зеркало логики wrapper-а: сентенизация → по одному предложению в pipeline.
+        Сентенизация выполняется здесь только для методов parse() и parse_batch(),
+        вызываемых напрямую (минуя wrapper). При вызове через wrapper сентенизация
+        уже выполнена на его стороне, и используется parse_sentence_chunk().
+
+        Parameters
+        ----------
+        texts : List[str]
+            Список сырых текстов.
+        output_format : str
+            'dict' | 'native' | 'conllu'
+
+        Returns
+        -------
+        List[List[sentence]]
+            Для каждого входного текста — список предложений.
+            При output_format='conllu' каждый текст возвращается как
+            List с одним элементом — CoNLL-U строкой всего текста.
+        """
+        if output_format not in ("dict", "native", "conllu"):
             raise ValueError(
                 f"Неизвестный output_format={output_format!r}. "
-                "Допустимые значения: 'dict', 'native'."
+                "Допустимые значения: 'dict', 'native', 'conllu'."
             )
+
         all_results = []
+
         for text in texts:
             if not text or not text.strip():
                 all_results.append([])
                 continue
-            # Зеркало wrapper: sentenize → по одному предложению в pipeline
+
+            # Зеркало wrapper: sentenize → по одному предложению в pipeline.
+            # Подача полного текста в pipeline приводит к OOM на больших текстах
+            # и к ошибкам zip() при наличии #NULL-узлов в multi-sentence входе.
             sentences = [s.text for s in self.sentenize(text)]
             text_results = []
+
             for sent_text in sentences:
+                if not sent_text or not sent_text.strip():
+                    continue
                 decoded = self.pipeline(sent_text, output_format="list")
                 if not decoded:
                     continue
                 sd = decoded[0]
-                if output_format == "native":
+
+                if output_format in ("native", "conllu"):
+                    # conllu строится поверх native — накапливаем как native
                     text_results.append(self._format_native_output(sd))
                 else:
                     text_results.append(self._build_dict(sd))
-            all_results.append(text_results)
+
+            if output_format == "conllu":
+                # Конвертируем весь текст одним вызовом → одна CoNLL-U строка
+                all_results.append([_to_conllu_str(text_results)])
+            else:
+                all_results.append(text_results)
+
         return all_results
 
     # def _parse_batch_impl(
@@ -229,28 +344,27 @@ class CobaldService:
             self,
             sentences: List[str],
             output_format: str = "dict",
-    ) -> List[List[Any]]:
+    ) -> List[Any]:
         """
-        Принимает чанк предложений, уже нарезанных razdel.sentenize на стороне wrapper.
-        Каждое предложение подаётся в pipeline как отдельный текст — sentenizer внутри
-        вернёт ровно один результат (decoded_sentences[0]).
+        Разбирает чанк предложений.
+
+        Предложения передаются уже готовыми — сентенизация текста
+        выполняется на стороне wrapper до вызова этого метода.
+        Каждое предложение подаётся в pipeline как отдельный текст,
+        pipeline возвращает ровно один результат (decoded[0]).
 
         Parameters
         ----------
         sentences : List[str]
-            Список текстов предложений (один чанк от wrapper-а).
+            Чанк предложений от wrapper-а (не более SENTENCE_CHUNK_SIZE).
         output_format : str
-            'dict' | 'native'
-
-        Returns
-        -------
-        List[List[token]]
-            Список предложений; каждое — список токенов.
+            'dict' | 'native' | 'conllu'
+        ...
         """
-        if output_format not in ("dict", "native"):
+        if output_format not in ("dict", "native", "conllu"):
             raise ValueError(
                 f"Неизвестный output_format={output_format!r}. "
-                "Допустимые значения: 'dict', 'native'."
+                "Допустимые значения: 'dict', 'native', conllu'."
             )
         result = []
         for sent_text in sentences:
@@ -263,8 +377,16 @@ class CobaldService:
             sd = decoded[0]
             if output_format == "native":
                 result.append(self._format_native_output(sd))
+            elif output_format == "conllu":
+                # conllu строится поверх native
+                native_sent = self._format_native_output(sd)
+                result.append(native_sent)  # накапливаем как native...
             else:
                 result.append(self._build_dict(sd))
+
+        if output_format == "conllu":
+            # ...и конвертируем весь чанк одним вызовом → одна строка на чанк
+            return [_to_conllu_str(result)]
         return result
 
     @modal.method()
@@ -547,6 +669,28 @@ def main():
         ok("[2] parse_sentence_chunk / native — структура корректна")
     except Exception as e:
         fail("[2] parse_sentence_chunk / native", e)
+
+    # ── [2b] parse_sentence_chunk → conllu ───────────────────────────────────
+    print(f"\n{sep}")
+    print("[2b] parse_sentence_chunk (conllu)")
+    print(sep)
+    try:
+        sentences = [s.text for s in sentenize(text_sample)]
+        result_conllu = service.parse_sentence_chunk.remote(
+            sentences, output_format="conllu"
+        )
+        # conllu-режим возвращает List с одной строкой на чанк
+        assert isinstance(result_conllu, list) and len(result_conllu) == 1
+        conllu_str = result_conllu[0]
+        assert isinstance(conllu_str, str)
+        assert "# sent_id = 1" in conllu_str, "отсутствует sent_id"
+        assert "# text = " in conllu_str, "отсутствует text"
+        assert "\t" in conllu_str, "отсутствует TAB-разделитель"
+        print("  # Колонки: ID  FORM  LEMMA  UPOS  XPOS  FEATS  HEAD  DEPREL  DEPS_EUD  MISC")
+        print(conllu_str)
+        ok("[2b] parse_sentence_chunk / conllu — sent_id, text, TAB присутствуют")
+    except Exception as e:
+        fail("[2b] parse_sentence_chunk / conllu", e)
 
     # ── [3] Пустой чанк → [] ────────────────────────────────────────────────
     print(f"\n{sep}")
