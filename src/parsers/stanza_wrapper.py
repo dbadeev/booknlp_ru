@@ -339,95 +339,88 @@ if __name__ == "__main__":
     text_multi  = "Зло, которым пугаешь, не так зло. Москва — столица России."
     sep = "=" * 60
 
+    def _print_native(results: list) -> None:
+        """
+        [NEW] Единый helper: выводит ВСЕ нативные поля каждого токена.
+        Поля: id, form, lemma, upos, xpos, feats, head, deprel,
+              start_char, end_char, spaces_after, ner.
+        """
+        for sent in results:
+            print(
+                f"\nПредложение: '{sent['text']}' "
+                f"(chars {sent['start_char']}:{sent['end_char']})"
+            )
+            for tok in sent["words"]:
+                feats = tok.get("feats") or {}
+                feats_str = "|".join(f"{k}={v}" for k, v in feats.items()) or "_"
+                sa   = tok.get("spaces_after")
+                sa_s = repr(sa) if sa not in (" ", None) else "_"
+                ner  = tok.get("ner", "O")
+                print(
+                    f"  {tok['id']:>2}  "
+                    f"{tok['form']:<16} "
+                    f"{tok['upos']:<6} "
+                    f"lemma={tok['lemma']:<16} "
+                    f"xpos={tok['xpos'] or '_':<6} "
+                    f"feats=[{feats_str}]  "
+                    f"head={tok['head']:<3} "
+                    f"deprel={tok['deprel']:<12} "
+                    f"sc={tok['start_char']} ec={tok['end_char']}  "
+                    f"sa={sa_s:<6} "
+                    f"ner={ner}"
+                )
+
     # ── 1. CONLL-U + RAZDEL ──────────────────────────────────────────────
-    print(f"\n{sep}")
-    print("1. CONLL-U + RAZDEL (parse_text)")
-    print(sep)
-    result_cr = parser.parse_text(text_single, output_format="conllu", tokenizer="razdel")
-    print(f"# text = {text_single}")
-    print(result_cr)
+    print(f"\n{sep}\n1. CONLL-U + RAZDEL (parse_text)\n{sep}")
+    result = parser.parse_text(text_single, output_format="conllu", tokenizer="razdel")
+    print(result)
 
     # ── 2. CONLL-U + INTERNAL ────────────────────────────────────────────
-    print(f"\n{sep}")
-    print("2. CONLL-U + INTERNAL (parse_text)")
-    print(sep)
-    result_ci = parser.parse_text(text_single, output_format="conllu", tokenizer="internal")
-    print(f"# text = {text_single}")
-    print(result_ci)
+    print(f"\n{sep}\n2. CONLL-U + INTERNAL (parse_text)\n{sep}")
+    print(parser.parse_text(text_single, output_format="conllu", tokenizer="internal"))
 
     # ── 3. NATIVE + RAZDEL ───────────────────────────────────────────────
-    print(f"\n{sep}")
-    print("3. NATIVE + RAZDEL (parse_text)")
-    print(sep)
-    result_nr = parser.parse_text(text_single, output_format="native", tokenizer="razdel")
-    print(f"Предложений: {len(result_nr)}")
-    for sent in result_nr:
-        print(f"\nПредложение: '{sent['text']}' "
-              f"(chars {sent['start_char']}:{sent['end_char']})")
-        for tok in sent["words"]:
-            ner = f" [NER: {tok['ner']}]" if "ner" in tok else ""
-            sa  = tok.get("spaces_after")
-            sa_s = f" [sa: {repr(sa)}]" if sa != " " and sa is not None else ""
-            print(f"  {tok['id']:>2}  {tok['form']:<15} {tok['upos']:<6}"
-                  f"  sc={tok['start_char']} ec={tok['end_char']}{ner}{sa_s}")
+    print(f"\n{sep}\n3. NATIVE + RAZDEL (parse_text)\n{sep}")
+    res_r = parser.parse_text(text_single, output_format="native", tokenizer="razdel")
+    print(f"Предложений: {len(res_r)}")
+    _print_native(res_r)
 
     # ── 4. NATIVE + INTERNAL ─────────────────────────────────────────────
-    print(f"\n{sep}")
-    print("4. NATIVE + INTERNAL (parse_text)")
-    print(sep)
-    result_ni = parser.parse_text(text_single, output_format="native", tokenizer="internal")
-    print(f"Предложений: {len(result_ni)}")
-    for sent in result_ni:
-        print(f"\nПредложение: '{sent['text']}' "
-              f"(chars {sent['start_char']}:{sent['end_char']})")
-        for tok in sent["words"]:
-            ner = f" [NER: {tok['ner']}]" if "ner" in tok else ""
-            print(f"  {tok['id']:>2}  {tok['form']:<15} {tok['upos']:<6}"
-                  f"  lemma={tok['lemma']}{ner}")
+    print(f"\n{sep}\n4. NATIVE + INTERNAL (parse_text)\n{sep}")
+    res_i = parser.parse_text(text_single, output_format="native", tokenizer="internal")
+    print(f"Предложений: {len(res_i)}")
+    _print_native(res_i)
 
     # ── 5. NER-статистика ────────────────────────────────────────────────
-    print(f"\n{sep}")
-    print("5. СТАТИСТИКА NER (native + razdel)")
-    print(sep)
-    all_words = [tok for sent in result_nr for tok in sent["words"]]
+    print(f"\n{sep}\n5. СТАТИСТИКА NER (native + razdel)\n{sep}")
+    all_words = [tok for sent in res_r for tok in sent["words"]]
     ner_tags  = [tok.get("ner", "O") for tok in all_words]
     print(f"Всего токенов: {len(ner_tags)}")
-    print(f"Персоны  (PER): {sum(1 for t in ner_tags if t and t.endswith('PER'))}")
-    print(f"Локации  (LOC): {sum(1 for t in ner_tags if t and t.endswith('LOC'))}")
-    print(f"Орг.     (ORG): {sum(1 for t in ner_tags if t and t.endswith('ORG'))}")
+    print(f"Персоны  (PER): {sum(1 for t in ner_tags if t and 'PER' in t)}")
+    print(f"Локации  (LOC): {sum(1 for t in ner_tags if t and 'LOC' in t)}")
+    print(f"Орг.     (ORG): {sum(1 for t in ner_tags if t and 'ORG' in t)}")
 
     # ── 6. parse_batch ───────────────────────────────────────────────────
-    print(f"\n{sep}")
-    print("6. parse_batch (два текста, conllu + razdel)")
-    print(sep)
-    batch_results = parser.parse_batch(
-        [text_single, text_multi],
-        output_format="conllu",
-        tokenizer="razdel",
-    )
-    for i, res in enumerate(batch_results):
-        print(f"\n# text {i + 1}")
+    print(f"\n{sep}\n6. parse_batch (два текста, conllu + razdel)\n{sep}")
+    for i, res in enumerate(
+        parser.parse_batch([text_single, text_multi], output_format="conllu", tokenizer="razdel")
+    ):
+        print(f"\n# === text {i + 1} ===")
         print(res)
 
     # ── 7. Сравнение токенизаторов ────────────────────────────────────────
-    print(f"\n{sep}")
-    print("7. СРАВНЕНИЕ ТОКЕНИЗАТОРОВ (razdel vs internal)")
-    print(sep)
+    print(f"\n{sep}\n7. СРАВНЕНИЕ ТОКЕНИЗАТОРОВ (razdel vs internal)\n{sep}")
     sample = "Кружка-термос стоит 500р."
-    res_r = parser.parse_text(sample, output_format="native", tokenizer="razdel")
-    res_i = parser.parse_text(sample, output_format="native", tokenizer="internal")
     print(f"Текст: '{sample}'")
-    print(f"  razdel:   {[w['form'] for s in res_r for w in s['words']]}")
-    print(f"  internal: {[w['form'] for s in res_i for w in s['words']]}")
+    print(f"  razdel:   {[w['form'] for s in parser.parse_text(sample, tokenizer='razdel')   for w in s['words']]}")
+    print(f"  internal: {[w['form'] for s in parser.parse_text(sample, tokenizer='internal') for w in s['words']]}")
 
-    # ── 8. Ключи первого токена ───────────────────────────────────────────
-    print(f"\n{sep}")
-    print("8. ВСЕ КЛЮЧИ ПЕРВОГО ТОКЕНА И ПРЕДЛОЖЕНИЯ")
-    print(sep)
-    if result_nr and result_nr[0].get("words"):
-        first_tok = result_nr[0]["words"][0]
-        print(f"Ключи токена:     {list(first_tok.keys())}")
-        print(f"Ключи предложения: {list(result_nr[0].keys())}")
+    # ── 8. Ключи первого токена и предложения ────────────────────────────
+    print(f"\n{sep}\n8. ВСЕ КЛЮЧИ ПЕРВОГО ТОКЕНА И ПРЕДЛОЖЕНИЯ\n{sep}")
+    if res_i and res_i[0].get("words"):
+        first_tok = res_i[0]["words"][0]
+        print(f"Ключи токена:      {list(first_tok.keys())}")
+        print(f"Ключи предложения: {list(res_i[0].keys())}")
         print("\nЗначения первого токена:")
         for k, v in first_tok.items():
             print(f"  {k}: {v}")
