@@ -270,7 +270,7 @@ class StanzaService:
         word_to_spaces_after: Dict[int, Optional[str]] = {}
 
         for token in sent.tokens:
-            ner_tag = token.ner if hasattr(token, "ner") else None
+            ner_tag = getattr(token, "ner", None) or "O"
             misc_dict = self._parse_misc_to_dict(token.misc)
             sa = token.spaces_after if hasattr(token, "spaces_after") else None
             last_wid = (
@@ -304,8 +304,7 @@ class StanzaService:
                 word_dict["spaces_after"] = word_to_spaces_after[wid]
             if wid in word_to_misc and word_to_misc[wid] is not None:
                 word_dict["misc"] = word_to_misc[wid]
-            if wid in word_to_ner and word_to_ner[wid] is not None:
-                word_dict["ner"] = word_to_ner[wid]
+            word_dict["ner"] = word_to_ner.get(wid) or "O"
             sent_parsed.append(word_dict)
 
         # Границы предложения в координатах исходного текста

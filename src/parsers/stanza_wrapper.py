@@ -265,59 +265,57 @@ class StanzaParser:
 
         Returns:
             List[результат для каждого текста] — порядок соответствует texts
+
+        Примечание по char-позициям:
+        tokenizer='razdel'    → start_char/end_char абсолютны (позиции в text)
+        tokenizer='internal'  → start_char/end_char относительны начала
+                              каждого предложения (Stanza не видит полный текст)
+        Для абсолютных позиций при internal path используйте parse.remote() напрямую.
         """
-        orig_batch_size = self.sentence_batch_size
-        if sentence_batch_size is not None:
-            self.sentence_batch_size = sentence_batch_size
-
+        effective_size = sentence_batch_size if sentence_batch_size is not None \
+            else self.sentence_batch_size
         try:
-            # Собираем чанки всех текстов и запоминаем границы
             all_chunks: List[Any] = []
-            # text_chunk_counts[i] = количество чанков для texts[i]
             text_chunk_counts: List[int] = []
-
             for text in texts:
                 if tokenizer == "razdel":
-                    chunks = self._split_to_chunks(text, base_offset=0)
+                    # [FIX] chunk_size передаётся явно
+                    chunks = self._split_to_chunks(
+                        text, base_offset=0, chunk_size=effective_size
+                    )
                 else:
-                    chunks = self._split_to_sentence_chunks(text)
+                    chunks = self._split_to_sentence_chunks(
+                        text, chunk_size=effective_size
+                    )
                 all_chunks.extend(chunks)
                 text_chunk_counts.append(len(chunks))
 
             if not all_chunks:
                 return [[] if output_format == "native" else "" for _ in texts]
 
-            # Единый .map() по всем чанкам всех текстов
             if tokenizer == "razdel":
                 all_results = list(
                     self.service.parse_sentence_chunk.map(
-                        all_chunks,
-                        kwargs={"output_format": output_format},
+                        all_chunks, kwargs={"output_format": output_format}
                     )
                 )
             else:
                 all_results = list(
                     self.service.parse_sentence_chunk_native.map(
-                        all_chunks,
-                        kwargs={"output_format": output_format},
+                        all_chunks, kwargs={"output_format": output_format}
                     )
                 )
 
-            # Распределяем результаты обратно по текстам
             per_text_results: List[Any] = []
             idx = 0
             for count in text_chunk_counts:
-                text_chunks = all_results[idx : idx + count]
-                per_text_results.append(self._merge_chunks(text_chunks))
+                per_text_results.append(self._merge_chunks(all_results[idx: idx + count]))
                 idx += count
-
             return per_text_results
 
         except Exception as e:
             self.logger.error(f"Error during batch parsing: {e}")
             raise
-        finally:
-            self.sentence_batch_size = orig_batch_size
 
 
 # ─── Тесты — аналогично spacy_wrapper.py ──────────────────────────────────────
