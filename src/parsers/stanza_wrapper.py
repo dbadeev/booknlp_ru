@@ -339,27 +339,39 @@ if __name__ == "__main__":
     text_multi  = "Зло, которым пугаешь, не так зло. Москва — столица России."
     sep = "=" * 60
 
+    # ─── Локальные хелперы вывода ─────────────────────────────────────────
+    # Заголовок столбцов — только для тестовой печати, не в выводе модели.
+    _CONLLU_HEADER = "\t".join(
+        ["ID", "FORM", "LEMMA", "UPOS", "XPOS", "FEATS", "HEAD", "DEPREL", "DEPS", "MISC"]
+    )
+
+    def _print_conllu(result: str) -> None:
+        """Печатает CoNLL-U с заголовком столбцов после каждой строки # text."""
+        for block in result.strip().split("\n\n"):
+            lines = block.strip().split("\n")
+            for line in lines:
+                print(line)
+                if line.startswith("# text"):
+                    print(_CONLLU_HEADER)
+            print()
+
     def _print_native(results: list) -> None:
-        """
-        [NEW] Единый helper: выводит ВСЕ нативные поля каждого токена.
-        Поля: id, form, lemma, upos, xpos, feats, head, deprel,
-              start_char, end_char, spaces_after, ner.
-        """
+        """Выводит ВСЕ нативные поля каждого токена с подписями."""
         for sent in results:
             print(
                 f"\nПредложение: '{sent['text']}' "
                 f"(chars {sent['start_char']}:{sent['end_char']})"
             )
             for tok in sent["words"]:
-                feats = tok.get("feats") or {}
+                feats     = tok.get("feats") or {}
                 feats_str = "|".join(f"{k}={v}" for k, v in feats.items()) or "_"
-                sa   = tok.get("spaces_after")
-                sa_s = repr(sa) if sa not in (" ", None) else "_"
-                ner  = tok.get("ner", "O")
+                sa        = tok.get("spaces_after")
+                sa_s      = repr(sa) if sa not in (" ", None) else "_"
+                ner       = tok.get("ner", "O")
                 print(
                     f"  {tok['id']:>2}  "
                     f"{tok['form']:<16} "
-                    f"{tok['upos']:<6} "
+                    f"upos={tok['upos']:<6} "
                     f"lemma={tok['lemma']:<16} "
                     f"xpos={tok['xpos'] or '_':<6} "
                     f"feats=[{feats_str}]  "
@@ -372,12 +384,15 @@ if __name__ == "__main__":
 
     # ── 1. CONLL-U + RAZDEL ──────────────────────────────────────────────
     print(f"\n{sep}\n1. CONLL-U + RAZDEL (parse_text)\n{sep}")
-    result = parser.parse_text(text_single, output_format="conllu", tokenizer="razdel")
-    print(result)
+    _print_conllu(
+        parser.parse_text(text_single, output_format="conllu", tokenizer="razdel")
+    )
 
     # ── 2. CONLL-U + INTERNAL ────────────────────────────────────────────
     print(f"\n{sep}\n2. CONLL-U + INTERNAL (parse_text)\n{sep}")
-    print(parser.parse_text(text_single, output_format="conllu", tokenizer="internal"))
+    _print_conllu(
+        parser.parse_text(text_single, output_format="conllu", tokenizer="internal")
+    )
 
     # ── 3. NATIVE + RAZDEL ───────────────────────────────────────────────
     print(f"\n{sep}\n3. NATIVE + RAZDEL (parse_text)\n{sep}")
@@ -406,7 +421,7 @@ if __name__ == "__main__":
         parser.parse_batch([text_single, text_multi], output_format="conllu", tokenizer="razdel")
     ):
         print(f"\n# === text {i + 1} ===")
-        print(res)
+        _print_conllu(res)
 
     # ── 7. Сравнение токенизаторов ────────────────────────────────────────
     print(f"\n{sep}\n7. СРАВНЕНИЕ ТОКЕНИЗАТОРОВ (razdel vs internal)\n{sep}")

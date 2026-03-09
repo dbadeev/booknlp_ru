@@ -43,7 +43,6 @@ image = (
 
 app = modal.App("booknlp-ru-stanza")
 
-
 @app.cls(image=image, gpu="T4", timeout=600, scaledown_window=300)
 class StanzaService:
     """
@@ -211,29 +210,18 @@ class StanzaService:
     def _format_conllu_sentence(
             self,
             sent,
-            sent_id: Optional[int] = None,
             original_text: Optional[str] = None,
     ) -> str:
         """
         CoNLL-U форматирование одного stanza.Sentence.
 
-        [FIX-2] Добавлены обязательные комментарии по стандарту UD CoNLL-U:
-          # sent_id = N        — порядковый номер предложения в документе
-          # text = <текст>     — оригинальный текст предложения
-
-        [FIX-B] original_text: при pretokenized=True Stanza собирает sent.text
-        как join-with-spaces, что даёт «Слово , слово» вместо «Слово, слово».
-        Передаём оригинальный текст явно (из _make_doc_razdel).
+        [REM] # global.columns убран — не входит в стандарт UD CoNLL-U.
+        [REM] # sent_id убран.
+        Единственный комментарий: # text = <оригинальный текст>.
 
         Поля: ID FORM LEMMA UPOS XPOS FEATS HEAD DEPREL DEPS MISC
-        DEPS = _ (enhanced dependencies не поддерживаются для русского)
-        MISC = SpaceAfter=No | _ (из token.spaces_after)
         """
         lines = []
-
-        # Заголовки CoNLL-U (стандарт Universal Dependencies)
-        if sent_id is not None:
-            lines.append(f"# sent_id = {sent_id}")
         text_for_header = original_text if original_text is not None else sent.text
         if text_for_header:
             lines.append(f"# text = {text_for_header}")
@@ -255,8 +243,8 @@ class StanzaService:
                 f"{word.feats or '_'}\t"
                 f"{int(word.head)}\t"
                 f"{word.deprel}\t"
-                f"_\t"  # DEPS
-                f"{misc}"  # MISC
+                f"_\t"
+                f"{misc}"
             )
         return "\n".join(lines)
 
@@ -342,48 +330,56 @@ class StanzaService:
 
     # ─── Форматирование: уровень документа (internal path) ───────────────────
 
-    def _format_conllu(self, doc, first_sent_id: int = 1) -> str:
+    def _format_conllu(
+            self,
+            doc,
+            original_texts: Optional[List[str]] = None,
+    ) -> str:
         """
-        CoNLL-U форматирование stanza.Document (internal path).
+        CoNLL-U форматирование stanza.Document.
 
-        [FIX-2] Добавлен # global.columns = ... (однократно, в начале документа).
-        Каждое предложение получает sent_id начиная с first_sent_id.
-        Используется при parse() и parse_sentence_chunk_native().
+        [REM] # global.columns убран — не входит в стандарт CoNLL-U.
+        Возвращает чистый CoNLL-U: для каждого предложения # text + токены,
+        предложения разделены пустой строкой.
         """
-        header = (
-            "# global.columns = ID FORM LEMMA UPOS XPOS FEATS HEAD DEPREL DEPS MISC\n"
-        )
-        parts = [
-            self._format_conllu_sentence(sent, sent_id=first_sent_id + i)
-            for i, sent in enumerate(doc.sentences)
-        ]
-        return header + "\n\n".join(p for p in parts if p) + "\n"
+        parts = []
+        for i, sent in enumerate(doc.sentences):
+            orig = (
+                original_texts[i]
+                if original_texts is not None and i < len(original_texts)
+                else None
+            )
+            parts.append(
+                self._format_conllu_sentence(sent, original_text=orig).strip()
+            )
+        return "\n\n".join(p for p in parts if p) + "\n"
 
-    def _format_native(self, doc, char_offset: int = 0) -> List[Dict[str, Any]]:
+    def _format_native(
+            self,
+            doc,
+            char_offset: int = 0,
+            original_texts: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Native форматирование stanza.Document (internal path).
 
-        [FIX-A] per-sentence offset: для каждого предложения вычисляем абсолютный
-        offset = sent.start_char + char_offset и передаём его в _format_native_sentence.
-        Ранее всегда передавался глобальный char_offset (не per-sentence).
-
-        Для internal path char_offset=0: word.start_char уже абсолютен в doc.
-        Для будущего использования с ненулевым char_offset (напр., страничная обработка)
-        per-sentence offset позволит корректно восстанавливать позиции.
+        [NEW] original_texts: передаётся в _format_native_sentence для корректного
+        поля 'text' при razdel-пути (при pretokenized=True Stanza собирает
+        sent.text через пробелы).
         """
         result = []
-        for sent in doc.sentences:
-            # Абсолютная позиция начала предложения в исходном тексте
-            sent_start = (
-                sent.tokens[0].words[0].start_char
-                if sent.tokens and sent.tokens[0].words
+        for i, sent in enumerate(doc.sentences):
+            orig = (
+                original_texts[i]
+                if original_texts is not None and i < len(original_texts)
                 else None
             )
-            # [FIX-A] Передаём char_offset (не вычисленный offset) — при internal path
-            # word.start_char уже содержит абсолютную позицию, добавление char_offset=0
-            # корректно. При char_offset!=0 (будущее использование) потребуется offset.
             result.append(
-                self._format_native_sentence(sent, char_offset=char_offset)
+                self._format_native_sentence(
+                    sent,
+                    char_offset=char_offset,
+                    original_text=orig,
+                )
             )
         return result
 
@@ -399,45 +395,32 @@ class StanzaService:
         """
         Razdel path — production-метод.
 
-        [FIX-C] Передаёт original_texts через _make_doc_razdel →
-        _run_pipeline_razdel_batch → _format_*_sentence для корректного
-        sent.text и # text = в CoNLL-U.
+        [REM] # global.columns убран из CoNLL-U вывода.
+        Возвращает чистый CoNLL-U.
         """
-        # [FIX-C] Тройка вместо двойки
         token_lists, char_offsets, original_texts = self._make_doc_razdel(
             sentences_with_offsets
         )
         if not token_lists:
             return [] if output_format == "native" else ""
 
-        # [FIX-C] _run_pipeline_razdel_batch принимает и возвращает original_texts
         sentences, offsets, orig_texts = self._run_pipeline_razdel_batch(
             token_lists, char_offsets, original_texts, batch_size=batch_size
         )
 
         if output_format == "conllu":
-            # [FIX-2] sent_id и original_text для корректных заголовков CoNLL-U
             parts = [
-                self._format_conllu_sentence(
-                    sent,
-                    sent_id=i + 1,
-                    original_text=orig_text,
-                ).strip()
-                for i, (sent, orig_text) in enumerate(zip(sentences, orig_texts))
+                self._format_conllu_sentence(sent, original_text=orig).strip()
+                for sent, orig in zip(sentences, orig_texts)
             ]
-            header = (
-                "# global.columns = ID FORM LEMMA UPOS XPOS FEATS HEAD DEPREL DEPS MISC\n"
-            )
-            return header + "\n\n".join(p for p in parts if p) + "\n"
+            # [REM] Без заголовка столбцов — чистый CoNLL-U
+            return "\n\n".join(p for p in parts if p) + "\n"
 
-        # [FIX-B] original_text → корректный sent.text в native output
         return [
             self._format_native_sentence(
-                sent,
-                char_offset=offset,
-                original_text=orig_text,
+                sent, char_offset=offset, original_text=orig
             )
-            for sent, offset, orig_text in zip(sentences, offsets, orig_texts)
+            for sent, offset, orig in zip(sentences, offsets, orig_texts)
         ]
 
     @modal.method()
@@ -472,73 +455,104 @@ class StanzaService:
 
     @modal.method()
     def parse(
-        self,
-        text: str,
-        output_format: OutputFormat = "native",
-        tokenizer: TokenizerType = "internal",
+            self,
+            text: str,
+            output_format: OutputFormat = "native",
+            tokenizer: TokenizerType = "internal",
     ) -> Any:
         """
-        [FIX] Добавлен параметр tokenizer. Razdel path исправлен.
-
-        ИСПРАВЛЕНИЕ razdel path:
-          Было:   stanza.Document([[tokens]], text=text)  → TypeError
-          Стало:  nlp_pretokenized([[tokens]])             → корректно
+        [REM] # global.columns убран из CoNLL-U вывода.
         """
-        import stanza
-
         if tokenizer == "razdel":
-            from razdel import tokenize as razdel_tokenize
-            tokens     = list(razdel_tokenize(text))
-            token_list = [[t.text for t in tokens]]   # одно "предложение"
-            # [FIX] Передаём list-of-lists напрямую в pretokenized pipeline
-            nlp_pt = self._get_pretokenized_pipeline()
-            doc    = nlp_pt(token_list)
+            from razdel import sentenize
+            sents = list(sentenize(text))
+            swoffsets = [(s.text, s.start) for s in sents]
+            token_lists, char_offsets, original_texts = self._make_doc_razdel(swoffsets)
+            if not token_lists:
+                return [] if output_format == "native" else ""
+            sentences, offsets, orig_texts = self._run_pipeline_razdel_batch(
+                token_lists, char_offsets, original_texts
+            )
+            if output_format == "conllu":
+                parts = [
+                    self._format_conllu_sentence(sent, original_text=orig).strip()
+                    for sent, orig in zip(sentences, orig_texts)
+                ]
+                return "\n\n".join(p for p in parts if p) + "\n"
+            return [
+                self._format_native_sentence(
+                    sent, char_offset=offset, original_text=orig
+                )
+                for sent, offset, orig in zip(sentences, offsets, orig_texts)
+            ]
         else:
             doc = self.nlp(text)
-
-        if output_format == "conllu":
-            return self._format_conllu(doc)
-        return self._format_native(doc)
+            if output_format == "conllu":
+                return self._format_conllu(doc)
+            return self._format_native(doc)
 
     @modal.method()
     def parse_batch(
-        self,
-        texts: List[str],
-        output_format: OutputFormat = "native",
-        tokenizer: TokenizerType = "internal",
-        batch_size: int = 16,
+            self,
+            texts: List[str],
+            output_format: OutputFormat = "native",
+            tokenizer: TokenizerType = "internal",
+            batch_size: int = 16,
     ) -> List[Any]:
         """
-        [FIX] Пакетная обработка текстов. Razdel path исправлен.
+        [FIX-4] Razdel path: сентенизация каждого текста перед токенизацией.
 
-        ИСПРАВЛЕНИЕ razdel path:
-          Было:   stanza.Document([[tokens]], text=text)  → TypeError
-          Стало:  nlp_pretokenized([[tokens]])             → корректно
+        ИСПРАВЛЕНИЕ: аналогично parse() — каждый текст сентенизируется,
+        затем токенизируется по предложениям. Stanza получает корректный
+        multi-sentence документ вместо одного псевдо-предложения из всех токенов.
+        original_texts передаётся в форматировщики для корректного # text =.
         """
         import stanza
 
         if tokenizer == "razdel":
-            from razdel import tokenize as razdel_tokenize
+            from razdel import sentenize
             nlp_pt = self._get_pretokenized_pipeline()
-            docs   = []
+            docs = []
+            # [FIX-4] Оригинальные тексты предложений для каждого документа
+            orig_texts_per_doc: List[List[str]] = []
+
             for text in texts:
-                tokens     = list(razdel_tokenize(text))
-                token_list = [[t.text for t in tokens]]
-                # [FIX] Передаём list-of-lists напрямую
-                doc = nlp_pt(token_list)
+                sents = list(sentenize(text))
+                swoffsets = [(s.text, s.start) for s in sents]
+                token_lists, _, orig_texts = self._make_doc_razdel(swoffsets)
+                if not token_lists:
+                    docs.append(None)
+                    orig_texts_per_doc.append([])
+                    continue
+                doc = nlp_pt(token_lists)
                 docs.append(doc)
+                orig_texts_per_doc.append(orig_texts)
+
+            results = []
+            for doc, orig_texts in zip(docs, orig_texts_per_doc):
+                if doc is None:
+                    results.append([] if output_format == "native" else "")
+                    continue
+                if output_format == "conllu":
+                    results.append(self._format_conllu(doc, original_texts=orig_texts))
+                else:
+                    results.append(self._format_native(doc, original_texts=orig_texts))
+            return results
+
         else:
             docs_input = [stanza.Document([], text=t) for t in texts]
-            docs       = self._run_pipeline_batch(docs_input, batch_size=batch_size)
-
-        if output_format == "conllu":
-            return [self._format_conllu(doc) for doc in docs]
-        return [self._format_native(doc) for doc in docs]
+            docs = self._run_pipeline_batch(docs_input, batch_size=batch_size)
+            if output_format == "conllu":
+                return [self._format_conllu(doc) for doc in docs]
+            return [self._format_native(doc) for doc in docs]
 
 
 # ─── local_entrypoint ─────────────────────────────────────────────────────────
 @app.local_entrypoint()
 def main():
+    """
+    Тестирует StanzaService напрямую — без wrapper, без chunking.
+    """
     from razdel import sentenize
 
     service     = StanzaService()
@@ -546,11 +560,39 @@ def main():
     text_multi  = "Зло, которым пугаешь, не так зло. Москва — столица России."
     sep         = "=" * 72
 
+    # ─── Локальные хелперы вывода ─────────────────────────────────────────
+    # Аналогично pymorphy3_modal.py: все print-хелперы — локальны в main().
+    # Заголовки и разметка нужны только здесь, в модельных функциях их нет.
+
+    # Заголовок столбцов для CoNLL-U вывода на печать.
+    # [NEW] Локальная константа — только для удобства восприятия теста.
+    # Не входит в реальный CoNLL-U вывод модели.
+
+    _CONLLU_HEADER = "\t".join(
+        ["ID", "FORM", "LEMMA", "UPOS", "XPOS", "FEATS", "HEAD", "DEPREL", "DEPS", "MISC"]
+    )
+
+    def _print_conllu(result: str, label: str = "") -> None:
+        """
+        Печатает CoNLL-U строку с заголовком столбцов перед каждым предложением.
+        Заголовок — только для удобства чтения в тесте.
+        """
+        if label:
+            print(f"# --- {label} ---")
+        # Вставляем _CONLLU_HEADER после каждой строки # text =
+        for block in result.strip().split("\n\n"):
+            lines = block.strip().split("\n")
+            for line in lines:
+                print(line)
+                if line.startswith("# text"):
+                    print(_CONLLU_HEADER)
+            print()
+
     def _print_native(results: list) -> None:
         """
-        [NEW] Единый helper: выводит ВСЕ нативные поля каждого токена.
-        Поля: id, form, lemma, upos, xpos, feats, head, deprel,
-              start_char, end_char, spaces_after, ner.
+        Выводит ВСЕ нативные поля каждого токена с подписями.
+        Все поля: id, form, upos, lemma, xpos, feats,
+                  head, deprel, start_char, end_char, spaces_after, ner.
         """
         for sent in results:
             print(
@@ -558,15 +600,15 @@ def main():
                 f"(chars {sent['start_char']}:{sent['end_char']})"
             )
             for tok in sent["words"]:
-                feats = tok.get("feats") or {}
+                feats     = tok.get("feats") or {}
                 feats_str = "|".join(f"{k}={v}" for k, v in feats.items()) or "_"
-                sa  = tok.get("spaces_after")
-                sa_s = repr(sa) if sa not in (" ", None) else "_"
-                ner = tok.get("ner", "O")
+                sa        = tok.get("spaces_after")
+                sa_s      = repr(sa) if sa not in (" ", None) else "_"
+                ner       = tok.get("ner", "O")
                 print(
                     f"  {tok['id']:>2}  "
                     f"{tok['form']:<16} "
-                    f"{tok['upos']:<6} "
+                    f"upos={tok['upos']:<6} "
                     f"lemma={tok['lemma']:<16} "
                     f"xpos={tok['xpos'] or '_':<6} "
                     f"feats=[{feats_str}]  "
@@ -593,18 +635,24 @@ def main():
 
     # ── 3. CONLL-U + INTERNAL ────────────────────────────────────────────
     print(f"\n{sep}\n3. CONLL-U + INTERNAL (parse.remote)\n{sep}")
-    print(service.parse.remote(text_multi, output_format="conllu", tokenizer="internal"))
+    _print_conllu(
+        service.parse.remote(text_multi, output_format="conllu", tokenizer="internal")
+    )
 
     # ── 4. CONLL-U + RAZDEL ──────────────────────────────────────────────
     print(f"\n{sep}\n4. CONLL-U + RAZDEL (parse.remote)\n{sep}")
-    print(service.parse.remote(text_multi, output_format="conllu", tokenizer="razdel"))
+    _print_conllu(
+        service.parse.remote(text_multi, output_format="conllu", tokenizer="razdel")
+    )
 
     # ── 5. parse_sentence_chunk (razdel, production) ──────────────────────
     print(f"\n{sep}\n5. parse_sentence_chunk (razdel path)\n{sep}")
     sentences = list(sentenize(text_multi))
     chunk     = [(s.text, s.start) for s in sentences]
     print(f"Чанк ({len(chunk)} предл.): {[c[0] for c in chunk]}\n")
-    print(service.parse_sentence_chunk.remote(chunk, output_format="conllu"))
+    _print_conllu(
+        service.parse_sentence_chunk.remote(chunk, output_format="conllu")
+    )
 
     # ── 6. parse_sentence_chunk_native (internal, production) ────────────
     print(f"\n{sep}\n6. parse_sentence_chunk_native (internal path)\n{sep}")
