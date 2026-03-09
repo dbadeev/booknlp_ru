@@ -124,8 +124,8 @@ class StanzaService:
             self.logger.info("Stanza pretokenized pipeline initialized (lazy).")
         return self._nlp_pretokenized
 
+    @staticmethod
     def _make_doc_razdel(
-            self,
             sentences_with_offsets: List[Tuple[str, int]],
     ) -> Tuple[List[List[str]], List[int], List[str]]:
         """
@@ -206,9 +206,8 @@ class StanzaService:
         return all_sentences, all_offsets, all_original_texts
 
     # ─── Форматирование: уровень предложения ─────────────────────────────────
-
+    @staticmethod
     def _format_conllu_sentence(
-            self,
             sent,
             original_text: Optional[str] = None,
     ) -> str:
@@ -226,16 +225,19 @@ class StanzaService:
         if text_for_header:
             lines.append(f"# text = {text_for_header}")
 
+        # [FIX] Строим word_id → spaces_after один раз — O(n) вместо O(n×m)
+        word_to_misc: Dict[int, str] = {}
+        for token in sent.tokens:
+            sa = getattr(token, "spaces_after", None)
+            misc = "SpaceAfter=No" if sa == "" else "_"
+            for w in token.words:
+                word_to_misc[int(w.id)] = misc
+
         for word in sent.words:
-            misc = "_"
-            for token in sent.tokens:
-                if any(int(w.id) == int(word.id) for w in token.words):
-                    sa = getattr(token, "spaces_after", None)
-                    if sa == "":
-                        misc = "SpaceAfter=No"
-                    break
+            wid = int(word.id)
+            misc = word_to_misc.get(wid, "_")
             lines.append(
-                f"{int(word.id)}\t"
+                f"{wid}\t"
                 f"{word.text}\t"
                 f"{word.lemma}\t"
                 f"{word.upos}\t"
@@ -601,7 +603,7 @@ def main():
             )
             for tok in sent["words"]:
                 feats     = tok.get("feats") or {}
-                feats_str = "|".join(f"{k}={v}" for k, v in feats.items()) or "_"
+                feats_str = "|".join(f"{key}={val}" for key, val in feats.items()) or "_"
                 sa        = tok.get("spaces_after")
                 sa_s      = repr(sa) if sa not in (" ", None) else "_"
                 ner       = tok.get("ner", "O")

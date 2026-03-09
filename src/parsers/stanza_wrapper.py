@@ -34,7 +34,7 @@
 
 import logging
 import modal
-from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from typing import Any, List, Literal, Optional, Tuple
 
 # [NEW] Типы — аналогично spacy_wrapper.py
 TokenizerType = Literal["internal", "razdel"]
@@ -74,9 +74,10 @@ class StanzaParser:
     # ─── Chunking helpers ─────────────────────────────────────────────────────
 
     def _split_to_chunks(
-        self,
-        text: str,
-        base_offset: int = 0,
+            self,
+            text: str,
+            base_offset: int = 0,
+            chunk_size: Optional[int] = None,  # [FIX] явный параметр
     ) -> List[List[Tuple[str, int]]]:
         """
         [NEW] Razdel path: сентенизация + разбивка на чанки с офсетами.
@@ -99,19 +100,17 @@ class StanzaParser:
         """
         from razdel import sentenize
 
+        size = chunk_size if chunk_size is not None else self.sentence_batch_size
         sentences = list(sentenize(text))
-        chunk_size = self.sentence_batch_size
         return [
-            [
-                (s.text, base_offset + s.start)
-                for s in sentences[i : i + chunk_size]
-            ]
-            for i in range(0, len(sentences), chunk_size)
+            [(s.text, base_offset + s.start) for s in sentences[ci: ci + size]]
+            for ci in range(0, len(sentences), size)
         ]
 
     def _split_to_sentence_chunks(
-        self,
-        text: str,
+            self,
+            text: str,
+            chunk_size: Optional[int] = None,  # [FIX] явный параметр
     ) -> List[List[str]]:
         """
         [NEW] Native (internal tokenizer) path: сентенизация + разбивка на чанки.
@@ -132,11 +131,11 @@ class StanzaParser:
         """
         from razdel import sentenize
 
+        size = chunk_size if chunk_size is not None else self.sentence_batch_size
         sentences = list(sentenize(text))
-        chunk_size = self.sentence_batch_size
         return [
-            [s.text for s in sentences[i : i + chunk_size]]
-            for i in range(0, len(sentences), chunk_size)
+            [s.text for s in sentences[ci: ci + size]]
+            for ci in range(0, len(sentences), size)
         ]
 
     @staticmethod
@@ -211,42 +210,33 @@ class StanzaParser:
             conllu → str
         """
         # Временное переопределение batch_size для этого вызова
-        orig_batch_size = self.sentence_batch_size
-        if sentence_batch_size is not None:
-            self.sentence_batch_size = sentence_batch_size
-
+        effective_size = sentence_batch_size if sentence_batch_size is not None \
+            else self.sentence_batch_size
         try:
             if tokenizer == "razdel":
-                # ── Razdel path ──────────────────────────────────────────
-                chunks = self._split_to_chunks(text, base_offset=0)
+                chunks = self._split_to_chunks(text, base_offset=0,
+                                               chunk_size=effective_size)
                 if not chunks:
                     return [] if output_format == "native" else ""
-                # Параллельная отправка чанков в Modal
                 results = list(
                     self.service.parse_sentence_chunk.map(
-                        chunks,
-                        kwargs={"output_format": output_format},
+                        chunks, kwargs={"output_format": output_format}
                     )
                 )
             else:
-                # ── Native (internal) path ────────────────────────────────
-                chunks = self._split_to_sentence_chunks(text)
+                chunks = self._split_to_sentence_chunks(text,
+                                                        chunk_size=effective_size)
                 if not chunks:
                     return [] if output_format == "native" else ""
                 results = list(
                     self.service.parse_sentence_chunk_native.map(
-                        chunks,
-                        kwargs={"output_format": output_format},
+                        chunks, kwargs={"output_format": output_format}
                     )
                 )
-
             return self._merge_chunks(results)
-
         except Exception as e:
             self.logger.error(f"Error during Stanza parsing: {e}")
             raise
-        finally:
-            self.sentence_batch_size = orig_batch_size
 
     def parse_batch(
         self,
@@ -364,7 +354,7 @@ if __name__ == "__main__":
             )
             for tok in sent["words"]:
                 feats     = tok.get("feats") or {}
-                feats_str = "|".join(f"{k}={v}" for k, v in feats.items()) or "_"
+                feats_str = "|".join(f"{fk}={fv}" for fk, fv in feats.items()) or "_"
                 sa        = tok.get("spaces_after")
                 sa_s      = repr(sa) if sa not in (" ", None) else "_"
                 ner       = tok.get("ner", "O")
@@ -437,7 +427,7 @@ if __name__ == "__main__":
         print(f"Ключи токена:      {list(first_tok.keys())}")
         print(f"Ключи предложения: {list(res_i[0].keys())}")
         print("\nЗначения первого токена:")
-        for k, v in first_tok.items():
-            print(f"  {k}: {v}")
+        for key, val in first_tok.items():
+            print(f"  {key}: {val}")
 
     print(f"\n{'✅ Тестирование завершено!':^60}")
