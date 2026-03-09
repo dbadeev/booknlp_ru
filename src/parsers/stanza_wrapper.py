@@ -1,229 +1,435 @@
+# stanza_wrapper.py
+# =============================================================================
+# ИЗМЕНЕНИЯ по сравнению с предыдущей версией:
+#   [NEW] _split_to_chunks()         — razdel path → List[List[(text, offset)]]
+#   [NEW] _split_to_sentence_chunks() — native path → List[List[str]]
+#   [NEW] _merge_chunks()            — склейка результатов чанков
+#   [NEW] sentence_batch_size        — параметр чанкинга в __init__
+#   [CHG] parse_text() — теперь: sentenize → chunks → .map() (не .remote())
+#   [CHG] parse_batch() — список текстов: sentenize × N → all_chunks → .map()
+#   [REM] Всё форматирование, морфология и вывод перенесены в stanza_modal.py
+#   [REM] parse_batch(batch_tokens) — удалён pretokenized API (заменён chunking)
+#   [NEW] Параметр tokenizer: 'internal' | 'razdel' во всех методах
+# =============================================================================
+
 #!/usr/bin/env python3
 """
-Обёртка для Stanza (через Modal) с поддержкой нативного формата.
-Включает корректную обработку полей spaces_after, misc и ner.
+Тонкий клиент для StanzaService (Modal).
+
+Обязанности wrapper:
+  ├── _split_to_chunks()          razdel path → List[List[(text, offset)]]
+  ├── _split_to_sentence_chunks() native path → List[List[str]]
+  ├── _merge_chunks()             склейка результатов чанков
+  │
+  ├── parse_text()   sentenize → chunks → .map()
+  └── parse_batch()  sentenize × N → all_chunks → .map()
+
+Никакого форматирования, никакой морфологии, никакого вывода — только
+маршрутизация и управление чанками.
+
+Сентенизация выполняется ЗДЕСЬ, в wrapper, ДО отправки в Modal.
+Оба пути (razdel / native) используют razdel.sentenize для разбивки
+на предложения — Modal получает уже разбитый текст.
 """
 
 import logging
 import modal
-from typing import List, Dict, Any, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+
+# [NEW] Типы — аналогично spacy_wrapper.py
+TokenizerType = Literal["internal", "razdel"]
+OutputFormat  = Literal["native", "conllu"]
 
 
 class StanzaParser:
     """
-    Клиент для Stanza, запущенного в Modal.
-    Stanza выполняет полный морфо-синтаксический анализ + NER для русского языка.
+    Тонкий клиент для StanzaService, запущенного в Modal.
+
+    Все вычисления выполняются удалённо. Wrapper отвечает только за:
+      1. Сентенизацию (razdel.sentenize) — до отправки в Modal
+      2. Разбивку на чанки (sentence_batch_size) — OOM-защита на GPU
+      3. Параллельную отправку чанков через .map()
+      4. Склейку результатов из чанков
+
+    Args:
+        sentence_batch_size: количество предложений в одном чанке.
+            Подбирается под конкретный GPU и тип текстов.
+            По умолчанию: 32 (T4 16GB, средние предложения).
+            Уменьшить при OOM или длинных предложениях.
     """
 
-    def __init__(self):
+    def __init__(self, sentence_batch_size: int = 32):
         self.logger = logging.getLogger(__name__)
+        # [NEW] sentence_batch_size — параметр чанкинга для OOM-защиты
+        self.sentence_batch_size = sentence_batch_size
         try:
-            self.service = modal.Cls.from_name("booknlp-ru-stanza", "StanzaService")()
+            self.service = modal.Cls.from_name(
+                "booknlp-ru-stanza", "StanzaService"
+            )()
             self.logger.info("Connected to Stanza via Modal.")
         except Exception as e:
             self.logger.error(f"Failed to connect to Modal: {e}")
-            raise e
+            raise
+
+    # ─── Chunking helpers ─────────────────────────────────────────────────────
+
+    def _split_to_chunks(
+        self,
+        text: str,
+        base_offset: int = 0,
+    ) -> List[List[Tuple[str, int]]]:
+        """
+        [NEW] Razdel path: сентенизация + разбивка на чанки с офсетами.
+
+        Использует razdel.sentenize для разбивки текста на предложения.
+        Каждый чанк несёт пары (sentence_text, start_char) — символьный
+        офсет относительно начала исходного (полного) текста.
+
+        Modal-метод parse_sentence_chunk() принимает именно такой формат:
+        офсеты нужны для восстановления start_char/end_char токенов
+        в координатах исходного текста.
+
+        Args:
+            text:        исходный текст для разбивки
+            base_offset: смещение начала text в документе (для parse_batch)
+
+        Returns:
+            List[List[(sentence_text, start_char)]]
+            — список чанков, каждый чанк = список пар (текст, офсет)
+        """
+        from razdel import sentenize
+
+        sentences = list(sentenize(text))
+        chunk_size = self.sentence_batch_size
+        return [
+            [
+                (s.text, base_offset + s.start)
+                for s in sentences[i : i + chunk_size]
+            ]
+            for i in range(0, len(sentences), chunk_size)
+        ]
+
+    def _split_to_sentence_chunks(
+        self,
+        text: str,
+    ) -> List[List[str]]:
+        """
+        [NEW] Native (internal tokenizer) path: сентенизация + разбивка на чанки.
+
+        Использует тот же razdel.sentenize для разбивки — только тексты,
+        без офсетов. Modal-метод parse_sentence_chunk_native() принимает
+        List[str] и выполняет собственную токенизацию Stanza.
+
+        start_char/end_char токенов в результате будут относительны
+        начала каждого предложения (не исходного текста) — это осознанное
+        ограничение internal-пути.
+
+        Args:
+            text: исходный текст для разбивки
+
+        Returns:
+            List[List[str]] — список чанков, каждый чанк = список текстов
+        """
+        from razdel import sentenize
+
+        sentences = list(sentenize(text))
+        chunk_size = self.sentence_batch_size
+        return [
+            [s.text for s in sentences[i : i + chunk_size]]
+            for i in range(0, len(sentences), chunk_size)
+        ]
+
+    @staticmethod
+    def _merge_chunks(chunks_results: List[Any]) -> Any:
+        """
+        [NEW] Склейка результатов из нескольких чанков.
+
+        Поддерживает оба формата:
+          native → List[Dict]: конкатенация списков предложений
+          conllu → str:        объединение строк через двойной перенос
+
+        Args:
+            chunks_results: List[результатов от parse_sentence_chunk*]
+
+        Returns:
+            Объединённый результат того же типа, что и элементы входного списка.
+        """
+        if not chunks_results:
+            return []
+
+        # Определяем тип по первому непустому результату
+        first = next((r for r in chunks_results if r), None)
+        if first is None:
+            return []
+
+        if isinstance(first, str):
+            # CoNLL-U: объединяем через двойной перевод строки
+            return "\n\n".join(r.strip() for r in chunks_results if r.strip()) + "\n"
+        else:
+            # Native: конкатенируем списки предложений
+            result = []
+            for chunk in chunks_results:
+                if isinstance(chunk, list):
+                    result.extend(chunk)
+            return result
+
+    # ─── Public API ───────────────────────────────────────────────────────────
 
     def parse_text(
-        self, text: str, native_format: bool = False
-    ) -> Union[List[List[Dict[str, Any]]], List[Dict[str, Any]]]:
+        self,
+        text: str,
+        output_format: OutputFormat = "native",
+        tokenizer: TokenizerType = "internal",
+        sentence_batch_size: Optional[int] = None,
+    ) -> Any:
         """
-        Если native_format=False (по умолчанию): List[List[Dict]]
-          CoNLL-U-совместимый формат; список предложений, каждое — список токенов.
-          Поля токена: id, form, lemma, upos, xpos, feats (строка), head, deprel, misc (строка)
-          Отсутствуют: start_char, end_char, spaces_after — не входят в стандарт CoNLL-U.
+        [CHG] Основной метод парсинга одного текста.
 
-        Если native_format=True: List[Dict]
-          Нативный формат; список предложений, каждое — dict с ключами:
-            "words"        : List[Dict] — токены предложения
-            "sentiment"    : str        — (только en/zh/de, для ru отсутствует)
-            "constituency" : str        — (только en, для ru отсутствует)
+        Алгоритм:
+          1. Сентенизация текста через razdel.sentenize (в wrapper)
+          2. Разбивка на чанки по sentence_batch_size
+          3. Отправка чанков в Modal через .map() (параллельно)
+          4. Склейка результатов
 
-          Каждый токен ("words") содержит:
-            id, form, lemma, upos, xpos  — стандарт CoNLL-U
-            feats        : dict {"Case": "Nom", "Number": "Sing", ...}
-            head, deprel : синтаксис
-            start_char   : int  — word.start_char, позиция начала в тексте
-            end_char     : int  — word.end_char, позиция конца в тексте
-            spaces_after : str  — token.spaces_after (Stanza v1.4+):
-                                  '' = нет пробела (≈ SpaceAfter=No в CoNLL-U)
-                                  ' ' = обычный пробел (норма)
-                                  '\n', '\t' и др. = нестандартные пробелы
-            misc (опц.)  : dict — прочие MISC поля CoNLL-U из token.misc
-                                  (Translit, LTranslit и др.); НЕ содержит SpaceAfter
-            ner  (опц.)  : str  — token.ner: тег NER ("B-PER", "I-LOC", "O" и др.)
+        Razdel path (tokenizer='razdel'):
+          chunks = List[List[(text, offset)]]
+          → parse_sentence_chunk.map(chunks)
+
+        Native path (tokenizer='internal'):
+          chunks = List[List[str]]
+          → parse_sentence_chunk_native.map(chunks)
+
+        Args:
+            text:               исходный текст
+            output_format:      'native' | 'conllu'
+            tokenizer:          'internal' | 'razdel'
+            sentence_batch_size: переопределяет self.sentence_batch_size
+                                 для этого вызова
+
+        Returns:
+            native → List[Dict] (список предложений)
+            conllu → str
         """
+        # Временное переопределение batch_size для этого вызова
+        orig_batch_size = self.sentence_batch_size
+        if sentence_batch_size is not None:
+            self.sentence_batch_size = sentence_batch_size
+
         try:
-            return self.service.parse.remote(text, native_format=native_format)
+            if tokenizer == "razdel":
+                # ── Razdel path ──────────────────────────────────────────
+                chunks = self._split_to_chunks(text, base_offset=0)
+                if not chunks:
+                    return [] if output_format == "native" else ""
+                # Параллельная отправка чанков в Modal
+                results = list(
+                    self.service.parse_sentence_chunk.map(
+                        chunks,
+                        kwargs={"output_format": output_format},
+                    )
+                )
+            else:
+                # ── Native (internal) path ────────────────────────────────
+                chunks = self._split_to_sentence_chunks(text)
+                if not chunks:
+                    return [] if output_format == "native" else ""
+                results = list(
+                    self.service.parse_sentence_chunk_native.map(
+                        chunks,
+                        kwargs={"output_format": output_format},
+                    )
+                )
+
+            return self._merge_chunks(results)
+
         except Exception as e:
             self.logger.error(f"Error during Stanza parsing: {e}")
-            raise e
+            raise
+        finally:
+            self.sentence_batch_size = orig_batch_size
 
     def parse_batch(
         self,
-        batch_tokens: list[list[str]],
-        native_format: bool = False,
-    ) -> Union[List[List[Dict[str, Any]]], List[Dict[str, Any]]]:
+        texts: List[str],
+        output_format: OutputFormat = "native",
+        tokenizer: TokenizerType = "internal",
+        sentence_batch_size: Optional[int] = None,
+    ) -> List[Any]:
         """
-        Метод принимает готовые токены (список предложений, каждое — список строк).
-        Использует nlp_pretokenized на сервере.
+        [CHG] Пакетная обработка нескольких текстов.
 
-        Параметры:
-          batch_tokens : list[list[str]]
-            Предтокенизированные предложения.
-            Пример: [["Москва", "—", "столица"], ["Привет", "!"]]
-          native_format : bool, optional (default=False)
-            Формат вывода — аналогично parse_text.
+        Для каждого текста выполняет сентенизацию и разбивку на чанки,
+        затем отправляет все чанки всех текстов в Modal за один .map().
 
-        ВАЖНО (при tokenize_pretokenized=True):
-          - spaces_after = None: исходная строка недоступна, пробелы неизвестны
-          - start_char = None, end_char = None: символьные позиции недоступны
+        Алгоритм:
+          1. Для каждого текста: sentenize → chunks
+          2. Все чанки объединяются в один список с маркерами текстов
+          3. .map() по всем чанкам параллельно
+          4. Склейка чанков обратно по текстам
+
+        Args:
+            texts:              список текстов для обработки
+            output_format:      'native' | 'conllu'
+            tokenizer:          'internal' | 'razdel'
+            sentence_batch_size: переопределяет self.sentence_batch_size
+
+        Returns:
+            List[результат для каждого текста] — порядок соответствует texts
         """
+        orig_batch_size = self.sentence_batch_size
+        if sentence_batch_size is not None:
+            self.sentence_batch_size = sentence_batch_size
+
         try:
-            return self.service.parse_batch.remote(batch_tokens, native_format=native_format)
+            # Собираем чанки всех текстов и запоминаем границы
+            all_chunks: List[Any] = []
+            # text_chunk_counts[i] = количество чанков для texts[i]
+            text_chunk_counts: List[int] = []
+
+            for text in texts:
+                if tokenizer == "razdel":
+                    chunks = self._split_to_chunks(text, base_offset=0)
+                else:
+                    chunks = self._split_to_sentence_chunks(text)
+                all_chunks.extend(chunks)
+                text_chunk_counts.append(len(chunks))
+
+            if not all_chunks:
+                return [[] if output_format == "native" else "" for _ in texts]
+
+            # Единый .map() по всем чанкам всех текстов
+            if tokenizer == "razdel":
+                all_results = list(
+                    self.service.parse_sentence_chunk.map(
+                        all_chunks,
+                        kwargs={"output_format": output_format},
+                    )
+                )
+            else:
+                all_results = list(
+                    self.service.parse_sentence_chunk_native.map(
+                        all_chunks,
+                        kwargs={"output_format": output_format},
+                    )
+                )
+
+            # Распределяем результаты обратно по текстам
+            per_text_results: List[Any] = []
+            idx = 0
+            for count in text_chunk_counts:
+                text_chunks = all_results[idx : idx + count]
+                per_text_results.append(self._merge_chunks(text_chunks))
+                idx += count
+
+            return per_text_results
+
         except Exception as e:
             self.logger.error(f"Error during batch parsing: {e}")
             raise
+        finally:
+            self.sentence_batch_size = orig_batch_size
 
 
-# ============================================================
-# БЛОК: Тестовые примеры использования wrapper
-# ============================================================
+# ─── Тесты — аналогично spacy_wrapper.py ──────────────────────────────────────
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
-    parser = StanzaParser()
+    parser = StanzaParser(sentence_batch_size=32)
 
-    test_text = "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
+    text_single = "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
+    text_multi  = "Зло, которым пугаешь, не так зло. Москва — столица России."
+    sep = "=" * 60
 
-    # ============================================================
-    # Демонстрация работы в упрощенном формате (CoNLL-U)
-    # ============================================================
-    print("=" * 60)
-    print("УПРОЩЕННЫЙ ФОРМАТ (CoNLL-U):")
-    print("=" * 60)
-    result = parser.parse_text(test_text, native_format=False)
-    print("Stanza Test:")
-    for sent in result:
-        for tok in sent:
-            # print(
-            #     f"{tok.get('id')}\t{tok.get('form')}\t{tok.get('lemma')}\t"
-            #     f"{tok.get('upos')}\t{tok.get('head')}\t{tok.get('deprel')}\t"
-            #     f"{tok.get('misc') or '_'}"
-            # )
-            print(
-                f"{tok.get('id')}\t"
-                f"{tok.get('form')}\t"
-                f"{tok.get('lemma')}\t"
-                f"{tok.get('upos')}\t"
-                f"{tok.get('xpos') or '_'}\t"  # колонка 5: XPOS
-                f"{tok.get('feats') or '_'}\t"  # колонка 6: FEATS (строка CoNLL-U)
-                f"{tok.get('head')}\t"
-                f"{tok.get('deprel')}\t"
-                f"_\t"  # колонка 9: DEPS (enhanced deps — Stanza не выдаёт)
-                f"{tok.get('misc') or '_'}"  # колонка 10: MISC
-            )
+    # ── 1. CONLL-U + RAZDEL ──────────────────────────────────────────────
+    print(f"\n{sep}")
+    print("1. CONLL-U + RAZDEL (parse_text)")
+    print(sep)
+    result_cr = parser.parse_text(text_single, output_format="conllu", tokenizer="razdel")
+    print(f"# text = {text_single}")
+    print(result_cr)
 
-    # ============================================================
-    # Демонстрация работы в нативном формате с NER
-    # ============================================================
-    print("\n" + "=" * 60)
-    print("НАТИВНЫЙ ФОРМАТ (native) с NER:")
-    print("=" * 60)
-    result_native = parser.parse_text(test_text, native_format=True)
-    print("Stanza Test (Native):")
+    # ── 2. CONLL-U + INTERNAL ────────────────────────────────────────────
+    print(f"\n{sep}")
+    print("2. CONLL-U + INTERNAL (parse_text)")
+    print(sep)
+    result_ci = parser.parse_text(text_single, output_format="conllu", tokenizer="internal")
+    print(f"# text = {text_single}")
+    print(result_ci)
 
-    for sent_data in result_native:
-        words = sent_data.get("words", [])
-        print(f"\nПредложение содержит {len(words)} токенов")
+    # ── 3. NATIVE + RAZDEL ───────────────────────────────────────────────
+    print(f"\n{sep}")
+    print("3. NATIVE + RAZDEL (parse_text)")
+    print(sep)
+    result_nr = parser.parse_text(text_single, output_format="native", tokenizer="razdel")
+    print(f"Предложений: {len(result_nr)}")
+    for sent in result_nr:
+        print(f"\nПредложение: '{sent['text']}' "
+              f"(chars {sent['start_char']}:{sent['end_char']})")
+        for tok in sent["words"]:
+            ner = f" [NER: {tok['ner']}]" if "ner" in tok else ""
+            sa  = tok.get("spaces_after")
+            sa_s = f" [sa: {repr(sa)}]" if sa != " " and sa is not None else ""
+            print(f"  {tok['id']:>2}  {tok['form']:<15} {tok['upos']:<6}"
+                  f"  sc={tok['start_char']} ec={tok['end_char']}{ner}{sa_s}")
 
-        # ========== ПОЯСНЕНИЕ ПРО SENTIMENT И CONSTITUENCY ==========
-        # Для русского языка эти процессоры не доступны
-        if "sentiment" in sent_data:
-            print(f"Sentiment: {sent_data['sentiment']}")
-        else:
-            print("Sentiment: не доступен для русского языка (только en/zh/de)")
-        if "constituency" in sent_data:
-            print(f"Constituency: {sent_data['constituency'][:50]}...")
-        else:
-            print("Constituency: не доступен для русского языка")
+    # ── 4. NATIVE + INTERNAL ─────────────────────────────────────────────
+    print(f"\n{sep}")
+    print("4. NATIVE + INTERNAL (parse_text)")
+    print(sep)
+    result_ni = parser.parse_text(text_single, output_format="native", tokenizer="internal")
+    print(f"Предложений: {len(result_ni)}")
+    for sent in result_ni:
+        print(f"\nПредложение: '{sent['text']}' "
+              f"(chars {sent['start_char']}:{sent['end_char']})")
+        for tok in sent["words"]:
+            ner = f" [NER: {tok['ner']}]" if "ner" in tok else ""
+            print(f"  {tok['id']:>2}  {tok['form']:<15} {tok['upos']:<6}"
+                  f"  lemma={tok['lemma']}{ner}")
 
-        print("\nТокены с NER:")
-        for tok in words:
-            print(f"\nText: {tok.get('form')}")
-            print(f"  id: {tok.get('id')}")
-            print(f"  lemma: {tok.get('lemma')}, upos: {tok.get('upos')}, xpos: {tok.get('xpos')}")
-            print(f"  feats: {tok.get('feats')}")
-            print(f"  head: {tok.get('head')}, deprel: {tok.get('deprel')}")
-            # start_char / end_char: позиции в исходном тексте (word.start_char / word.end_char)
-            print(f"  start_char: {tok.get('start_char')}, end_char: {tok.get('end_char')}")
-            # spaces_after: token.spaces_after — '' = нет пробела, ' ' = норма, None = pretokenized
-            print(f"  spaces_after: {repr(tok.get('spaces_after'))}")
-            # misc: прочие CoNLL-U MISC поля (Translit и др.), SpaceAfter здесь отсутствует
-            if 'misc' in tok:
-                print(f"  misc: {tok.get('misc')}")
-            else:
-                print("  misc: None")
-            # ner: тег именованной сущности из token.ner
-            if 'ner' in tok:
-                print(f"  ner: {tok.get('ner')}")
-            else:
-                print("  ner: O")
-
-    # ============================================================
-    # Статистика именованных сущностей
-    # ============================================================
-    print("\n" + "=" * 60)
-    print("СТАТИСТИКА ИМЕНОВАННЫХ СУЩНОСТЕЙ:")
-    print("=" * 60)
-    all_words = [tok for sent_data in result_native for tok in sent_data.get("words", [])]
-    ner_tags = [tok.get('ner', 'O') for tok in all_words]
+    # ── 5. NER-статистика ────────────────────────────────────────────────
+    print(f"\n{sep}")
+    print("5. СТАТИСТИКА NER (native + razdel)")
+    print(sep)
+    all_words = [tok for sent in result_nr for tok in sent["words"]]
+    ner_tags  = [tok.get("ner", "O") for tok in all_words]
     print(f"Всего токенов: {len(ner_tags)}")
-    print(f"Персоны (PER): {sum(1 for t in ner_tags if t and t.endswith('PER'))}")
-    print(f"Локации (LOC): {sum(1 for t in ner_tags if t and t.endswith('LOC'))}")
-    print(f"Организации (ORG): {sum(1 for t in ner_tags if t and t.endswith('ORG'))}")
+    print(f"Персоны  (PER): {sum(1 for t in ner_tags if t and t.endswith('PER'))}")
+    print(f"Локации  (LOC): {sum(1 for t in ner_tags if t and t.endswith('LOC'))}")
+    print(f"Орг.     (ORG): {sum(1 for t in ner_tags if t and t.endswith('ORG'))}")
 
-    # ============================================================
-    # Все ключи первого токена и предложения
-    # ============================================================
-    print("\n" + "=" * 60)
-    print("ВСЕ КЛЮЧИ ПЕРВОГО ТОКЕНА:")
-    print("=" * 60)
-    if result_native and result_native[0] and result_native[0].get("words"):
-        first_token = result_native[0]["words"][0]
-        print(f"Ключи: {list(first_token.keys())}")
-        print("Значения:")
-        for key, value in first_token.items():
-            print(f"  {key}: {value}")
+    # ── 6. parse_batch ───────────────────────────────────────────────────
+    print(f"\n{sep}")
+    print("6. parse_batch (два текста, conllu + razdel)")
+    print(sep)
+    batch_results = parser.parse_batch(
+        [text_single, text_multi],
+        output_format="conllu",
+        tokenizer="razdel",
+    )
+    for i, res in enumerate(batch_results):
+        print(f"\n# text {i + 1}")
+        print(res)
 
-    print("\n" + "=" * 60)
-    print("ВСЕ КЛЮЧИ ПРЕДЛОЖЕНИЯ:")
-    print("=" * 60)
-    if result_native and result_native[0]:
-        print(f"Ключи предложения: {list(result_native[0].keys())}")
+    # ── 7. Сравнение токенизаторов ────────────────────────────────────────
+    print(f"\n{sep}")
+    print("7. СРАВНЕНИЕ ТОКЕНИЗАТОРОВ (razdel vs internal)")
+    print(sep)
+    sample = "Кружка-термос стоит 500р."
+    res_r = parser.parse_text(sample, output_format="native", tokenizer="razdel")
+    res_i = parser.parse_text(sample, output_format="native", tokenizer="internal")
+    print(f"Текст: '{sample}'")
+    print(f"  razdel:   {[w['form'] for s in res_r for w in s['words']]}")
+    print(f"  internal: {[w['form'] for s in res_i for w in s['words']]}")
 
-    # ============================================================
-    # Демонстрация parse_batch (предтокенизированный режим)
-    # ============================================================
-    print("\n" + "=" * 60)
-    print("PARSE_BATCH (предтокенизированный ввод):")
-    print("=" * 60)
-    batch = [
-        ["Зло", ",", "которым", "ты", "меня", "пугаешь"],
-        ["Москва", "—", "столица", "России", "."],
-    ]
-    result_batch = parser.parse_batch(batch, native_format=False)
-    for sent in result_batch:
-        for tok in sent:
-            print(
-                f"{tok.get('id')}\t"
-                f"{tok.get('form')}\t"
-                f"{tok.get('lemma')}\t"
-                f"{tok.get('upos')}\t"
-                f"{tok.get('xpos') or '_'}\t"  # колонка 5: XPOS
-                f"{tok.get('feats') or '_'}\t"  # колонка 6: FEATS (строка CoNLL-U)
-                f"{tok.get('head')}\t"
-                f"{tok.get('deprel')}\t"
-                f"_\t"  # колонка 9: DEPS (enhanced deps — Stanza не выдаёт)
-                f"{tok.get('misc') or '_'}"  # колонка 10: MISC
-            )
-        print()
+    # ── 8. Ключи первого токена ───────────────────────────────────────────
+    print(f"\n{sep}")
+    print("8. ВСЕ КЛЮЧИ ПЕРВОГО ТОКЕНА И ПРЕДЛОЖЕНИЯ")
+    print(sep)
+    if result_nr and result_nr[0].get("words"):
+        first_tok = result_nr[0]["words"][0]
+        print(f"Ключи токена:     {list(first_tok.keys())}")
+        print(f"Ключи предложения: {list(result_nr[0].keys())}")
+        print("\nЗначения первого токена:")
+        for k, v in first_tok.items():
+            print(f"  {k}: {v}")
+
+    print(f"\n{'✅ Тестирование завершено!':^60}")

@@ -286,7 +286,7 @@ class CobaldService:
         texts : List[str]
             Сырые тексты. Токенизация выполняется внутри pipeline.
         output_format : str
-            'dict' | 'native'
+            'dict' | 'native' | 'conllu'
 
         Returns
         -------
@@ -454,6 +454,10 @@ class CobaldService:
             deps_ud.append(("0", str(len(deps_ud) + 1), "_"))
 
         deps_eud = list(sentence_data["deps_eud"])
+        if len(deps_eud) < n_ref:
+            self.logger.warning(
+                f"deps_eud короче words ({len(deps_eud)} vs {n_ref}), дополняем defaults"
+            )
         while len(deps_eud) < n_ref:
             deps_eud.append(("0", str(len(deps_eud) + 1), "_"))
 

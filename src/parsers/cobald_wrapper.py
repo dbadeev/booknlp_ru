@@ -96,7 +96,7 @@ class CobaldParser:
         text : str
             Сырой текст.
         output_format : str
-            'dict' | 'native'
+            'dict' | 'native' | 'conllu'
         chunk_size : int
             Число предложений в одном чанке. Уменьшайте при OOM.
 
@@ -124,7 +124,7 @@ class CobaldParser:
             )
             return self.merge_chunks(chunk_results)
         except Exception as e:
-            self.logger.error(f"❌ Ошибка при разборе текста:Упал чанк (всего {len(chunks)}): {e}")
+            self.logger.error(f"❌ Ошибка при разборе текста (упал чанк, всего {len(chunks)}): {e}")
             raise
 
     def parse_batch(
@@ -275,7 +275,6 @@ def _to_conllu_str(sentences: List[List[Dict[str, Any]]]) -> str:
             tok_id = tok.get("id", "_")
             line = "\t".join([
                 str(tok_id),
-                str(tok["id"]),
                 tok.get("form", "_"),
                 tok.get("lemma", "_") or "_",   # только в native
                 tok.get("upos",  "_") or "_",   # только в native
