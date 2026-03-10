@@ -618,7 +618,7 @@ class StanzaService:
                             original_text=orig,
                             token_spans=spans,  # [FIX]
                         ).strip()
-                        for sent, orig, spans in zip(sentences, orig_texts, all_token_spans)
+                        for sent, orig, spans in zip(sents_slice, orig_slice, spans_slice)
                     ]
                     results.append("\n\n".join(p for p in parts if p) + "\n")
                 else:
