@@ -133,7 +133,9 @@ class UDPipeService:
         Returns:
             Строка для подачи в Pipeline("horizontal").
         """
-        return "\n".join(" ".join(tokens) for tokens in token_lists) + "\n"
+        # ← фильтруем пустые предложения до построения строки
+        clean = [tl for tl in token_lists if tl]
+        return "\n".join(" ".join(tokens) for tokens in clean) + "\n"
 
     def _parse_misc(self, misc_str: str, output_format: str) -> Any:
         """
@@ -348,10 +350,14 @@ class UDPipeService:
 
         Returns:
             List[List[Dict]] — все предложения чанка, 10 полей на токен.
-        """
-        if not token_lists:
-            return []
 
+        Ограничение: в horizontal-режиме UDPipe не заполняет MISC (SpaceAfter и др.),
+        т.к. не имеет доступа к оригинальному тексту. Используйте native-путь,
+        если MISC необходим. Офсеты для постобработки доступны через wrapper.
+        """
+        clean = [tl for tl in token_lists if tl]  # ← добавить
+        if not clean:
+            return []
         # Строим horizontal-ввод для UDPipe
         horizontal_text = self._build_horizontal_input(token_lists)
         return self._process_text(horizontal_text, "horizontal", output_format)
@@ -417,7 +423,9 @@ class UDPipeService:
 
         Returns:
             List[List[List[Dict]]] — для каждого текста: список предложений.
+
         """
+
         return [
             self.parse.local(text, output_format=output_format, tokenizer=tokenizer)
             for text in texts
@@ -440,7 +448,11 @@ _CONLLU_HEADER = (
     f"MISC"
 )
 _CONLLU_SEP = "  " + "─" * (len(_CONLLU_HEADER) - 2)
-
+_CONLLU_HEADER = (
+    f"  {'ID':>4}  {'FORM':<14} {'LEMMA':<14} "
+    f"{'UPOS':<7} {'XPOS':<12} {'HEAD':>4}  "
+    f"{'DEPREL':<12} {'DEPS':<6}  MISC"
+)
 
 def _print_sentence_table(
     sent_idx: int,
@@ -465,26 +477,14 @@ def _print_sentence_table(
     print(_CONLLU_SEP)
 
     for tok in tokens:
-        feats = tok["feats"] if tok["feats"] != "_" else "—"
-        xpos  = tok["xpos"]  if tok["xpos"]  != "_" else "—"
-        deps  = tok["deps"]  if tok["deps"]   != "_" else "—"
-        misc  = repr(tok["misc"]) if isinstance(tok["misc"], dict) else tok["misc"]
-
-        # Обрезаем длинные feats для читаемости в таблице
-        feats_trunc = (feats[:33] + "..") if len(feats) > 35 else feats
-
         print(
-            f"  {tok['id']:>4}  "
-            f"{tok['form']:<14} "
-            f"{tok['lemma']:<14} "
-            f"{tok['upos']:<7} "
-            f"{xpos:<12} "
-            f"{feats_trunc:<35} "
-            f"{tok['head']:>4}  "
-            f"{tok['deprel']:<12} "
-            f"{deps:<6}  "
-            f"{misc}"
+            f"  {tok['id']:>4}  {tok['form']:<14} {tok['lemma']:<14} "
+            f"{tok['upos']:<7} {tok['xpos']:<12} {tok['head']:>4}  "
+            f"{tok['deprel']:<12} {tok['deps']:<6}  {tok['misc']}"
         )
+        # FEATS выводится полностью отдельной строкой
+        if tok["feats"] != "_":
+            print(f"        ↳ feats: {tok['feats']}")
 
 
 def _print_token_full(tok: Dict[str, Any]) -> None:
@@ -566,7 +566,8 @@ def main():
     )
     print(f"Предложений: {len(result_nd)}")
     for i, tokens in enumerate(result_nd, 1):
-        _print_sentence_table(i, tokens, " ".join(t["form"] for t in tokens))
+        # → показываем sents_single[i-1] (original)
+        _print_sentence_table(i, tokens, sents_single[i - 1])
     _print_misc_summary(result_nd, "dict")
     if result_nd:
         print(f"\n  JSON первого токена:")
@@ -581,7 +582,8 @@ def main():
     )
     print(f"Предложений: {len(result_nn)}")
     for i, tokens in enumerate(result_nn, 1):
-        _print_sentence_table(i, tokens, " ".join(t["form"] for t in tokens))
+        # → показываем sents_single[i-1] (original)
+        _print_sentence_table(i, tokens, sents_single[i - 1])
     _print_misc_summary(result_nn, "native")
     if result_nn:
         print(f"\n  JSON первого токена:")
@@ -606,6 +608,7 @@ def main():
     for i, tokens in enumerate(result_rd, 1):
         sent_text = sents_multi[i - 1].text if i <= len(sents_multi) else ""
         _print_sentence_table(i, tokens, sent_text)
+        _print_sentence_table(i, tokens, " ".join(t["form"] for t in tokens))
     _print_misc_summary(result_rd, "dict")
     if result_rd:
         print(f"\n  JSON первого токена:")
@@ -622,6 +625,7 @@ def main():
     for i, tokens in enumerate(result_rn, 1):
         sent_text = sents_multi[i - 1].text if i <= len(sents_multi) else ""
         _print_sentence_table(i, tokens, sent_text)
+        _print_sentence_table(i, tokens, " ".join(t["form"] for t in tokens))
     _print_misc_summary(result_rn, "native")
     if result_rn:
         print(f"\n  JSON первого токена:")
