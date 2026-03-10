@@ -2,9 +2,9 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Тонкий клиент для UDPipeService (Modal).
 # Единственные обязанности:
-#   _split_to_sentence_chunks()  — native-путь:  List[List[str]]
-#   _split_to_chunks()           — razdel-путь:  (token_chunks, offset_chunks)
-#   _merge_chunks()              — склейка результатов .map()
+#   split_to_sentence_chunks()  — native-путь:  List[List[str]]
+#   split_to_chunks()           — razdel-путь:  (token_chunks, offset_chunks)
+#   merge_chunks()              — склейка результатов .map()
 #   parse_text()                 — sentenize → chunks → .remote() / .map()
 #   parse_batch()                — sentenize × N → all_chunks → единый .map()
 #
@@ -93,7 +93,7 @@ class UDPipeParser:
     # ─── Chunking helpers ────────────────────────────────────────────────────
 
     @staticmethod
-    def _split_to_sentence_chunks(
+    def split_to_sentence_chunks(
         text: str,
         chunk_size: int,
     ) -> List[_NativeSentChunk]:
@@ -128,7 +128,7 @@ class UDPipeParser:
         ]
 
     @staticmethod
-    def _split_to_chunks(
+    def split_to_chunks(
         text: str,
         chunk_size: int,
         base_offset: int = 0,
@@ -144,7 +144,7 @@ class UDPipeParser:
 
         В Modal передаётся только token_chunks (List[List[str]]).
         offset_chunks остаётся в wrapper и присоединяется к результатам
-        в _merge_chunks для восстановления позиций в исходном документе.
+        в merge_chunks для восстановления позиций в исходном документе.
 
         Args:
             text:        входной текст.
@@ -161,7 +161,9 @@ class UDPipeParser:
             ValueError: если chunk_size <= 0.
         """
         if not text or not text.strip():
-            return []
+            token_chunks: List[_RazdelTokenChunk] = []
+            offset_chunks: List[_OffsetChunk] = []
+            return token_chunks, offset_chunks
         if chunk_size <= 0:
             raise ValueError(
                 f"chunk_size должен быть > 0, получено: {chunk_size!r}"
@@ -188,7 +190,7 @@ class UDPipeParser:
         return token_chunks, offset_chunks
 
     @staticmethod
-    def _merge_chunks(
+    def merge_chunks(
         results: List[_ChunkResult],
         offset_chunks: Optional[List[_OffsetChunk]] = None,
     ) -> List[Any]:
@@ -210,7 +212,7 @@ class UDPipeParser:
 
         Args:
             results:       список результатов чанков из Modal .map().
-            offset_chunks: список офсет-чанков из _split_to_chunks (razdel-путь)
+            offset_chunks: список офсет-чанков из split_to_chunks (razdel-путь)
                            или None (native-путь).
 
         Returns:
@@ -238,7 +240,7 @@ class UDPipeParser:
         if len(flat_results) != len(flat_offsets):
             # Несоответствие возможно при ошибке Modal для отдельного чанка
             logging.getLogger("UDPipeParser").warning(
-                f"_merge_chunks: несоответствие количества предложений "
+                f"merge_chunks: несоответствие количества предложений "
                 f"({len(flat_results)}) и офсетов ({len(flat_offsets)}). "
                 f"Используется min({len(flat_results)}, {len(flat_offsets)})."
             )
@@ -271,7 +273,7 @@ class UDPipeParser:
           1. razdel.sentenize разбивает text на предложения.
           2. Предложения группируются в чанки по sentence_batch_size.
           3. Один чанк → .remote(); несколько чанков → .map() (параллельно).
-          4. Результаты склеиваются через _merge_chunks.
+          4. Результаты склеиваются через merge_chunks.
 
         Args:
             text:               входной текст.
@@ -287,7 +289,7 @@ class UDPipeParser:
             return []
 
         if tokenizer == "native":
-            chunks = self._split_to_sentence_chunks(text, sentence_batch_size)
+            chunks = self.split_to_sentence_chunks(text, sentence_batch_size)
             if not chunks:
                 return []
 
@@ -305,10 +307,10 @@ class UDPipeParser:
                     kwargs={"output_format": output_format},
                 )
             )
-            return self._merge_chunks(results)
+            return self.merge_chunks(results)
 
         else:  # razdel
-            token_chunks, offset_chunks = self._split_to_chunks(
+            token_chunks, offset_chunks = self.split_to_chunks(
                 text, sentence_batch_size
             )
             if not token_chunks:
@@ -320,7 +322,7 @@ class UDPipeParser:
                         token_chunks[0], output_format=output_format
                     ) or []
                 )
-                return self._merge_chunks([modal_result], offset_chunks)
+                return self.merge_chunks([modal_result], offset_chunks)
 
             results = list(
                 self._service.parse_sentence_chunk_razdel.map(
@@ -328,7 +330,7 @@ class UDPipeParser:
                     kwargs={"output_format": output_format},
                 )
             )
-            return self._merge_chunks(results, offset_chunks)
+            return self.merge_chunks(results, offset_chunks)
 
     def parse_batch(
         self,
@@ -368,7 +370,7 @@ class UDPipeParser:
                 if not text or not text.strip():
                     chunk_counts.append(0)
                     continue
-                chunks = self._split_to_sentence_chunks(text, sentence_batch_size)
+                chunks = self.split_to_sentence_chunks(text, sentence_batch_size)
                 chunk_counts.append(len(chunks))
                 all_chunks.extend(chunks)
 
@@ -390,7 +392,7 @@ class UDPipeParser:
                 if n == 0:
                     output.append([])
                 else:
-                    output.append(self._merge_chunks(all_results[idx : idx + n]))
+                    output.append(self.merge_chunks(all_results[idx : idx + n]))
                     idx += n
             assert idx == len(all_results), (
                 f"parse_batch native: idx={idx} != "
@@ -408,7 +410,7 @@ class UDPipeParser:
                 if not text or not text.strip():
                     chunk_counts.append(0)
                     continue
-                tc, oc = self._split_to_chunks(text, sentence_batch_size)
+                tc, oc = self.split_to_chunks(text, sentence_batch_size)
                 chunk_counts.append(len(tc))
                 all_token_chunks.extend(tc)
                 all_offset_chunks.extend(oc)
@@ -430,7 +432,7 @@ class UDPipeParser:
                     output.append([])
                 else:
                     output.append(
-                        self._merge_chunks(
+                        self.merge_chunks(
                             all_results[idx : idx + n],
                             all_offset_chunks[idx : idx + n],
                         )
@@ -539,8 +541,8 @@ def _print_misc_summary(results: List[Any], label: str) -> None:
 
 def _run_unit_tests() -> None:
     """
-    ← НОВОЕ: Юнит-тесты _split_to_sentence_chunks, _split_to_chunks,
-    _merge_chunks без обращения к Modal.
+    ← НОВОЕ: Юнит-тесты split_to_sentence_chunks, split_to_chunks,
+    merge_chunks без обращения к Modal.
     """
     sep = "─" * 72
     print(f"\n{'═' * 72}")
@@ -554,37 +556,37 @@ def _run_unit_tests() -> None:
         "Он молчал.\n"
         "Она ждала."
     )
-    # ── _split_to_sentence_chunks ─────────────────────────────────────────
+    # ── split_to_sentence_chunks ─────────────────────────────────────────
     print(f"\n{sep}")
-    print("_split_to_sentence_chunks  (chunk_size=2)")
+    print("split_to_sentence_chunks  (chunk_size=2)")
     print(sep)
-    chunks_n = UDPipeParser._split_to_sentence_chunks(text, chunk_size=2)
+    chunks_n = UDPipeParser.split_to_sentence_chunks(text, chunk_size=2)
     print(f"Предложений всего: {sum(len(c) for c in chunks_n)}, чанков: {len(chunks_n)}")
     for i, ch in enumerate(chunks_n):
         print(f"  Чанк {i}: {ch}")
 
     # chunk_size=1
-    chunks_n1 = UDPipeParser._split_to_sentence_chunks(text, chunk_size=1)
+    chunks_n1 = UDPipeParser.split_to_sentence_chunks(text, chunk_size=1)
     print(f"chunk_size=1 → {len(chunks_n1)} чанков  "
           f"({'✅' if len(chunks_n1) == 5 else '❌'})")
 
     # Пустой текст
-    chunks_empty = UDPipeParser._split_to_sentence_chunks("", chunk_size=32)
+    chunks_empty = UDPipeParser.split_to_sentence_chunks("", chunk_size=32)
     print(f"Пустой текст → {chunks_empty}  "
           f"({'✅' if chunks_empty == [] else '❌'})")
 
     # chunk_size <= 0
     try:
-        UDPipeParser._split_to_sentence_chunks(text, chunk_size=0)
+        UDPipeParser.split_to_sentence_chunks(text, chunk_size=0)
         print("chunk_size=0 → ❌ (ожидался ValueError)")
     except ValueError as e:
         print(f"chunk_size=0 → ValueError: {e}  ✅")
 
-    # ── _split_to_chunks ──────────────────────────────────────────────────
+    # ── split_to_chunks ──────────────────────────────────────────────────
     print(f"\n{sep}")
-    print("_split_to_chunks  (chunk_size=2, base_offset=100)")
+    print("split_to_chunks  (chunk_size=2, base_offset=100)")
     print(sep)
-    tc, oc = UDPipeParser._split_to_chunks(text, chunk_size=2, base_offset=100)
+    tc, oc = UDPipeParser.split_to_chunks(text, chunk_size=2, base_offset=100)
     print(f"Чанков: {len(tc)}  (token_chunks: {len(tc)}, offset_chunks: {len(oc)})")
     print(f"Количества совпадают: {'✅' if len(tc) == len(oc) else '❌'}")
     for i, (t_chunk, o_chunk) in enumerate(zip(tc, oc)):
@@ -596,9 +598,9 @@ def _run_unit_tests() -> None:
           f"{'✅' if oc[0][0][1] >= 100 else '❌'} "
           f"(первый офсет = {oc[0][0][1]})")
 
-    # ── _merge_chunks (native-путь) ───────────────────────────────────────
+    # ── merge_chunks (native-путь) ───────────────────────────────────────
     print(f"\n{sep}")
-    print("_merge_chunks  (native-путь, offset_chunks=None)")
+    print("merge_chunks  (native-путь, offset_chunks=None)")
     print(sep)
     # Синтетические данные для теста без Modal
     mock_results: List[_ChunkResult] = [
@@ -609,20 +611,20 @@ def _run_unit_tests() -> None:
            "xpos": "_", "feats": "_", "head": 2, "deprel": "nsubj",
            "deps": "_", "misc": "_"}]],
     ]
-    merged_n = UDPipeParser._merge_chunks(mock_results)
+    merged_n = UDPipeParser.merge_chunks(mock_results)
     print(f"Входных чанков: {len(mock_results)}, предложений после merge: {len(merged_n)}")
     print(f"Тип элемента: {type(merged_n[0]).__name__}  "
           f"({'✅' if isinstance(merged_n[0], list) else '❌ ожидался list'})")
 
-    # ── _merge_chunks (razdel-путь) ───────────────────────────────────────
+    # ── merge_chunks (razdel-путь) ───────────────────────────────────────
     print(f"\n{sep}")
-    print("_merge_chunks  (razdel-путь, offset_chunks заданы)")
+    print("merge_chunks  (razdel-путь, offset_chunks заданы)")
     print(sep)
     mock_offsets: List[_OffsetChunk] = [
         [("Нет!", 0)],
         [("Это невозможно.", 5)],
     ]
-    merged_r = UDPipeParser._merge_chunks(mock_results, mock_offsets)
+    merged_r = UDPipeParser.merge_chunks(mock_results, mock_offsets)
     print(f"Предложений после merge: {len(merged_r)}")
     for item in merged_r:
         print(f"  sent_start={item['sent_start']:>4}  "
@@ -639,7 +641,7 @@ def _run_unit_tests() -> None:
 
 # ─── Интеграционные тесты (с Modal) ─────────────────────────────────────────
 
-def _run_integration_tests(parser: UDPipeParser) -> None:
+def _run_integration_tests(udpipe_parser: UDPipeParser) -> None:
     """
     ← НОВОЕ: Интеграционные тесты parse_text / parse_batch через Modal.
     Проверяет оба tokenizer-пути, оба формата misc, чанкинг и офсеты.
@@ -647,12 +649,7 @@ def _run_integration_tests(parser: UDPipeParser) -> None:
     import json
 
     sep = "─" * 72
-    SEP = "═" * 72
 
-    text_single = (
-        "Зло, которым ты меня пугаешь, вовсе не так зло, "
-        "как ты зло ухмыляешься."
-    )
     text_multi = (
         "Нет!\n"
         "Это невозможно,— сказал он.\n"
@@ -660,10 +657,10 @@ def _run_integration_tests(parser: UDPipeParser) -> None:
     )
 
     # ── 1. parse_text: native, dict ───────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("ИНТЕГРАЦИЯ: parse_text  (tokenizer='native', output_format='dict')")
-    print(SEP)
-    result_nd = parser.parse_text(
+    print(sep)
+    result_nd = udpipe_parser.parse_text(
         text_multi, tokenizer="native", output_format="dict", sentence_batch_size=32
     )
     print(f"Предложений: {len(result_nd)}")
@@ -675,10 +672,10 @@ def _run_integration_tests(parser: UDPipeParser) -> None:
         print(json.dumps(result_nd[0][0], ensure_ascii=False, indent=2))
 
     # ── 2. parse_text: native, native ─────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("ИНТЕГРАЦИЯ: parse_text  (tokenizer='native', output_format='native')")
-    print(SEP)
-    result_nn = parser.parse_text(
+    print(sep)
+    result_nn = udpipe_parser.parse_text(
         text_multi, tokenizer="native", output_format="native"
     )
     print(f"Предложений: {len(result_nn)}")
@@ -690,10 +687,10 @@ def _run_integration_tests(parser: UDPipeParser) -> None:
         print(json.dumps(result_nn[0][0], ensure_ascii=False, indent=2))
 
     # ── 3. parse_text: razdel, dict ───────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("ИНТЕГРАЦИЯ: parse_text  (tokenizer='razdel', output_format='dict')")
-    print(SEP)
-    result_rd = parser.parse_text(
+    print(sep)
+    result_rd = udpipe_parser.parse_text(
         text_multi, tokenizer="razdel", output_format="dict", sentence_batch_size=32
     )
     print(f"Предложений: {len(result_rd)}")
@@ -710,10 +707,10 @@ def _run_integration_tests(parser: UDPipeParser) -> None:
             print(f"    start={item['sent_start']:>5}  {item['sent_text']!r}")
 
     # ── 4. parse_text: razdel, native ─────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("ИНТЕГРАЦИЯ: parse_text  (tokenizer='razdel', output_format='native')")
-    print(SEP)
-    result_rn = parser.parse_text(
+    print(sep)
+    result_rn = udpipe_parser.parse_text(
         text_multi, tokenizer="razdel", output_format="native"
     )
     print(f"Предложений: {len(result_rn)}")
@@ -726,13 +723,13 @@ def _run_integration_tests(parser: UDPipeParser) -> None:
         _print_token_full(result_rn[0]["tokens"][0])
 
     # ── 5. Чанкинг: chunk_size=1 (каждое предложение — отдельный Modal-вызов)
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("ИНТЕГРАЦИЯ: parse_text  (sentence_batch_size=1, проверка чанкинга)")
-    print(SEP)
-    result_chunk1 = parser.parse_text(
+    print(sep)
+    result_chunk1 = udpipe_parser.parse_text(
         text_multi, tokenizer="native", output_format="dict", sentence_batch_size=1
     )
-    result_chunk32 = parser.parse_text(
+    result_chunk32 = udpipe_parser.parse_text(
         text_multi, tokenizer="native", output_format="dict", sentence_batch_size=32
     )
     # Форма должна совпадать независимо от chunk_size
@@ -744,19 +741,26 @@ def _run_integration_tests(parser: UDPipeParser) -> None:
     print(f"Формы совпадают: {'✅' if match else '❌'}")
 
     # ── 6. parse_batch ────────────────────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("ИНТЕГРАЦИЯ: parse_batch  (оба tokenizer-пути)")
-    print(SEP)
+    print(sep)
     batch = [
         "Он думал о море.",
         "Кот лежал на диване.",
         text_multi,
         "",   # пустой текст — должен вернуть []
     ]
+
+    from typing import cast
+
     for tok_type in ("native", "razdel"):
-        results_b = parser.parse_batch(
-            batch, tokenizer=tok_type, output_format="dict", sentence_batch_size=32
+        results_b = udpipe_parser.parse_batch(
+            batch,
+            tokenizer=cast(TokenizerType, tok_type),
+            output_format="dict",
+            sentence_batch_size=32
         )
+
         print(f"\n  tokenizer='{tok_type}' → {len(results_b)} результатов:")
         for i, (txt, sents) in enumerate(zip(batch, results_b)):
             if tok_type == "native":
@@ -768,22 +772,22 @@ def _run_integration_tests(parser: UDPipeParser) -> None:
             print(f"    [{i}] {txt[:35]!r:38} → {n_s} предл., {n_t} токенов")
 
     # ── 7. Пустой ввод ────────────────────────────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("ПУСТОЙ ВВОД → ожидается []")
-    print(SEP)
-    e1 = parser.parse_text("",    tokenizer="native")
-    e2 = parser.parse_text("   ", tokenizer="razdel")
-    e3 = parser.parse_batch([],   tokenizer="native")
+    print(sep)
+    e1 = udpipe_parser.parse_text("",    tokenizer="native")
+    e2 = udpipe_parser.parse_text("   ", tokenizer="razdel")
+    e3 = udpipe_parser.parse_batch([],   tokenizer="native")
     print(f"  parse_text('')  native: {e1}  {'✅' if e1 == [] else '❌'}")
     print(f"  parse_text(' ') razdel: {e2}  {'✅' if e2 == [] else '❌'}")
     print(f"  parse_batch([]):        {e3}  {'✅' if e3 == [] else '❌'}")
 
     # ── 8. Сравнение native vs parse_batch[2] ─────────────────────────────
-    print(f"\n{SEP}")
+    print(f"\n{sep}")
     print("СРАВНЕНИЕ: parse_text vs parse_batch[2]  (native, text_multi)")
-    print(SEP)
-    pt = parser.parse_text(text_multi, tokenizer="native", output_format="dict")
-    pb = parser.parse_batch(
+    print(sep)
+    pt = udpipe_parser.parse_text(text_multi, tokenizer="native", output_format="dict")
+    pb = udpipe_parser.parse_batch(
         [batch[0], batch[1], text_multi], tokenizer="native", output_format="dict"
     )[2]
     forms_pt = [[t["form"] for t in s] for s in pt]

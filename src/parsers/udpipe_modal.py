@@ -7,7 +7,7 @@
 
 import modal
 import logging
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Dict, List, Literal
 
 # ─── Modal image ──────────────────────────────────────────────────────────────
 # Образ контейнера: Python 3.11, ufal.udpipe + razdel.
@@ -70,6 +70,7 @@ class UDPipeService:
 
         model_path = "/root/russian-syntagrus-ud-2.5-191206.udpipe"
         self.logger.info("Loading UDPipe model...")
+        # noinspection PyTypeChecker
         self.model = ufal.udpipe.Model.load(model_path)
         if not self.model:
             raise RuntimeError(f"Не удалось загрузить модель UDPipe: {model_path}")
@@ -137,7 +138,8 @@ class UDPipeService:
         clean = [tl for tl in token_lists if tl]
         return "\n".join(" ".join(tokens) for tokens in clean) + "\n"
 
-    def _parse_misc(self, misc_str: str, output_format: str) -> Any:
+    @staticmethod
+    def _parse_misc(misc_str: str, output_format: str) -> Any:
         """
         Разбирает поле MISC из CoNLL-U.
 
@@ -606,8 +608,8 @@ def main():
     )
     print(f"\nПредложений получено: {len(result_rd)}")
     for i, tokens in enumerate(result_rd, 1):
-        sent_text = sents_multi[i - 1].text if i <= len(sents_multi) else ""
-        _print_sentence_table(i, tokens, sent_text)
+        # sent_text = sents_multi[i - 1].text if i <= len(sents_multi) else ""
+        # _print_sentence_table(i, tokens, sent_text)
         _print_sentence_table(i, tokens, " ".join(t["form"] for t in tokens))
     _print_misc_summary(result_rd, "dict")
     if result_rd:
@@ -623,8 +625,8 @@ def main():
     )
     print(f"Предложений получено: {len(result_rn)}")
     for i, tokens in enumerate(result_rn, 1):
-        sent_text = sents_multi[i - 1].text if i <= len(sents_multi) else ""
-        _print_sentence_table(i, tokens, sent_text)
+        # sent_text = sents_multi[i - 1].text if i <= len(sents_multi) else ""
+        # _print_sentence_table(i, tokens, sent_text)
         _print_sentence_table(i, tokens, " ".join(t["form"] for t in tokens))
     _print_misc_summary(result_rn, "native")
     if result_rn:
