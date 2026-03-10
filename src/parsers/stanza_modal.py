@@ -254,7 +254,13 @@ class StanzaService:
                     no_space = (span[1] == token_spans[idx + 1][0])
                     word_to_misc[wid] = "SpaceAfter=No" if no_space else "_"
                 else:
-                    word_to_misc[wid] = "_"  # последний токен
+                    # [FIX] Последний токен — берём SpaceAfter из Stanza,
+                    # как это делает _format_native_sentence.
+                    # В pretokenized-режиме Stanza корректно проставляет spaces_after
+                    # последнего токена (обычно "" для точки в конце текста).
+                    last_token = sent.tokens[-1] if sent.tokens else None
+                    sa = getattr(last_token, "spaces_after", None) if last_token else None
+                    word_to_misc[wid] = "SpaceAfter=No" if sa == "" else "_"
         else:
             # internal path — как раньше
             for token in sent.tokens:
