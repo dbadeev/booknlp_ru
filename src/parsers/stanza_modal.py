@@ -148,6 +148,8 @@ class StanzaService:
             token_lists:    List[List[str]]  — токены каждого предложения
             char_offsets:   List[int]        — символьные офсеты
             original_texts: List[str]        — оригинальные тексты предложений
+            token_spans_per_sent: List[List[Tuple[int, int]]] — razdel-позиции (start, stop)
+                          каждого токена относительно начала предложения
         """
         from razdel import tokenize as razdel_tokenize
 
@@ -227,6 +229,7 @@ class StanzaService:
     def _format_conllu_sentence(
             sent,
             original_text: Optional[str] = None,
+            token_spans: Optional[List[Tuple[int, int]]] = None,
     ) -> str:
         """
         CoNLL-U форматирование одного stanza.Sentence.
@@ -242,13 +245,23 @@ class StanzaService:
         if text_for_header:
             lines.append(f"# text = {text_for_header}")
 
-        # [FIX] Строим word_id → spaces_after один раз — O(n) вместо O(n×m)
+        # [FIX] Если token_spans переданы — вычисляем SpaceAfter из позиций razdel
         word_to_misc: Dict[int, str] = {}
-        for token in sent.tokens:
-            sa = getattr(token, "spaces_after", None)
-            misc = "SpaceAfter=No" if sa == "" else "_"
-            for w in token.words:
-                word_to_misc[int(w.id)] = misc
+        if token_spans is not None:
+            for idx, span in enumerate(token_spans):
+                wid = idx + 1
+                if idx + 1 < len(token_spans):
+                    no_space = (span[1] == token_spans[idx + 1][0])
+                    word_to_misc[wid] = "SpaceAfter=No" if no_space else "_"
+                else:
+                    word_to_misc[wid] = "_"  # последний токен
+        else:
+            # internal path — как раньше
+            for token in sent.tokens:
+                sa = getattr(token, "spaces_after", None)
+                misc = "SpaceAfter=No" if sa == "" else "_"
+                for w in token.words:
+                    word_to_misc[int(w.id)] = misc
 
         for word in sent.words:
             wid = int(word.id)
@@ -303,6 +316,7 @@ class StanzaService:
                 word_to_spaces_after[wid] = sa
 
         sent_parsed: List[Dict[str, Any]] = []
+
         for word in sent.words:
             wid = int(word.id)
 
@@ -311,11 +325,18 @@ class StanzaService:
             if token_spans is not None and (wid - 1) < len(token_spans):
                 sc = token_spans[wid - 1][0] + char_offset
                 ec = token_spans[wid - 1][1] + char_offset
+                # [FIX] spaces_after из razdel-spans: есть ли пробел до следующего токена?
+                if wid < len(token_spans):  # не последний токен
+                    no_space = (token_spans[wid - 1][1] == token_spans[wid][0])
+                    sa = "" if no_space else " "
+                else:
+                    sa = word_to_spaces_after.get(wid)  # последний токен — берём из Stanza
             else:
                 raw_sc = word.start_char
                 raw_ec = word.end_char
                 sc = (raw_sc + char_offset) if raw_sc is not None else None
                 ec = (raw_ec + char_offset) if raw_ec is not None else None
+                sa = word_to_spaces_after.get(wid)  # internal path — Stanza знает
 
             word_dict: Dict[str, Any] = {
                 "id":           wid,
@@ -328,7 +349,8 @@ class StanzaService:
                 "deprel":       word.deprel,
                 "start_char":   sc,
                 "end_char":     ec,
-                "spaces_after": word_to_spaces_after.get(wid),
+                # "spaces_after": word_to_spaces_after.get(wid),
+                "spaces_after": sa,  # [FIX] вместо word_to_spaces_after.get(wid)
                 "ner":          word_to_ner.get(wid, "O"),
             }
             sent_parsed.append(word_dict)
@@ -428,8 +450,12 @@ class StanzaService:
 
         if output_format == "conllu":
             parts = [
-                self._format_conllu_sentence(sent, original_text=orig).strip()
-                for sent, orig in zip(sentences, orig_texts)
+                self._format_conllu_sentence(
+                    sent,
+                    original_text=orig,
+                    token_spans=spans,  # [FIX]
+                ).strip()
+                for sent, orig, spans in zip(sentences, orig_texts, all_token_spans)
             ]
             # [REM] Без заголовка столбцов — чистый CoNLL-U
             return "\n\n".join(p for p in parts if p) + "\n"
@@ -501,8 +527,12 @@ class StanzaService:
                 )
             if output_format == "conllu":
                 parts = [
-                    self._format_conllu_sentence(sent, original_text=orig).strip()
-                    for sent, orig in zip(sentences, orig_texts)
+                    self._format_conllu_sentence(
+                        sent,
+                        original_text=orig,
+                        token_spans=spans,  # [FIX]
+                    ).strip()
+                    for sent, orig, spans in zip(sentences, orig_texts, all_token_spans)
                 ]
                 return "\n\n".join(p for p in parts if p) + "\n"
             return [
@@ -583,8 +613,12 @@ class StanzaService:
 
                 if output_format == "conllu":
                     parts = [
-                        self._format_conllu_sentence(s, original_text=o).strip()
-                        for s, o in zip(sents_slice, orig_slice)
+                        self._format_conllu_sentence(
+                            sent,
+                            original_text=orig,
+                            token_spans=spans,  # [FIX]
+                        ).strip()
+                        for sent, orig, spans in zip(sentences, orig_texts, all_token_spans)
                     ]
                     results.append("\n\n".join(p for p in parts if p) + "\n")
                 else:
