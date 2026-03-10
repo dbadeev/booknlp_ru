@@ -208,6 +208,12 @@ class StanzaParser:
         Returns:
             native → List[Dict] (список предложений)
             conllu → str
+
+        Примечание по char-позициям (tokenizer='internal'):
+        start_char/end_char относительны начала каждого предложения
+        (wrapper разбивает на чанки — Stanza не видит полный текст).
+        Для абсолютных позиций используйте StanzaService.parse.remote() напрямую.
+        tokenizer='razdel' всегда возвращает абсолютные позиции (razdel-spans + offset).
         """
         # Временное переопределение batch_size для этого вызова
         effective_size = sentence_batch_size if sentence_batch_size is not None \
@@ -329,6 +335,8 @@ if __name__ == "__main__":
 
     # ─── Локальные хелперы вывода ─────────────────────────────────────────
     # Заголовок столбцов — только для тестовой печати, не в выводе модели.
+    # Намеренно без "#" — чтобы визуально выровняться с табами данных.
+
     _CONLLU_HEADER = "\t".join(
         ["ID", "FORM", "LEMMA", "UPOS", "XPOS", "FEATS", "HEAD", "DEPREL", "DEPS", "MISC"]
     )
