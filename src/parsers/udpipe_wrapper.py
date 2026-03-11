@@ -680,6 +680,9 @@ def _run_integration_tests(udpipe_parser: UDPipeParser) -> None:
         "«Правда?» — спросила она."
     )
 
+    # плоский список предложений для native-пути
+    sents_flat = [s.text for s in sentenize(text_multi)]
+
     # ── 1. parse_text: native, dict ───────────────────────────────────────
     print(f"\n{sep}")
     print("ИНТЕГРАЦИЯ: parse_text  (tokenizer='native', output_format='dict')")
@@ -689,7 +692,8 @@ def _run_integration_tests(udpipe_parser: UDPipeParser) -> None:
     )
     print(f"Предложений: {len(result_nd)}")
     for i, tokens in enumerate(result_nd, 1):
-        _print_sentence_table(i, tokens)
+        sent_text = sents_flat[i - 1] if i <= len(sents_flat) else ""
+        _print_sentence_table(i, tokens, sent_text)
     _print_misc_summary(result_nd, "dict")
     if result_nd:
         print(f"\n  JSON первого токена:")
@@ -704,7 +708,8 @@ def _run_integration_tests(udpipe_parser: UDPipeParser) -> None:
     )
     print(f"Предложений: {len(result_nn)}")
     for i, tokens in enumerate(result_nn, 1):
-        _print_sentence_table(i, tokens)
+        sent_text = sents_flat[i - 1] if i <= len(sents_flat) else ""
+        _print_sentence_table(i, tokens, sent_text)
     _print_misc_summary(result_nn, "native")
     if result_nn:
         print(f"\n  JSON первого токена:")
