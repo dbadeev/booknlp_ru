@@ -516,10 +516,11 @@ def _print_sentence_table(
     print(_CONLLU_SEP)
 
     for tok in tokens:
+        misc_str = str(tok["misc"]).replace("\n", "\\n").replace("\t", "\\t")
         print(
             f"  {tok['id']:>4}  {tok['form']:<14} {tok['lemma']:<14} "
             f"{tok['upos']:<7} {tok['xpos']:<12} {tok['head']:>4}  "
-            f"{tok['deprel']:<12} {tok['deps']:<6}  {tok['misc']}"
+            f"{tok['deprel']:<12} {tok['deps']:<6}  {misc_str}"
         )
         # FEATS выводится полностью отдельной строкой
         if tok["feats"] != "_":
