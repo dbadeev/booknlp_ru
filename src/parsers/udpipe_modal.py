@@ -151,25 +151,34 @@ class UDPipeService:
         Returns:
             str (output_format="dict") | dict (output_format="native").
         """
-        if output_format == "dict":
-            # Сырая строка CoNLL-U: "_" возвращаем как есть
-            return misc_str
-
-        # native: разбираем "Key=Val|Key2=Val2" → словарь
         if misc_str == "_":
-            return {}
+            return "_" if output_format == "dict" else {}
+        if output_format == "native":
+            # уже декодирует \n → newline
+            return dict(kv.split("=", 1) for kv in misc_str.split("|") if "=" in kv)
+        # dict-путь: вернуть raw-строку, но с декодированными CoNLL-U escapes
+        return misc_str.replace("\\n", "\n").replace("\\t", "\t")
 
-        result: Dict[str, Any] = {}
-        for part in misc_str.split("|"):
-            if "=" in part:
-                key, _, val = part.partition("=")
-                # Декодируем экранированные символы (\n → реальный newline и т.д.)
-                val = val.replace("\\n", "\n").replace("\\t", "\t")
-                result[key] = val
-            else:
-                # Одиночный флаг без значения → True
-                result[part] = True
-        return result
+
+        # if output_format == "dict":
+        #     # Сырая строка CoNLL-U: "_" возвращаем как есть
+        #     return misc_str
+        #
+        # # native: разбираем "Key=Val|Key2=Val2" → словарь
+        # if misc_str == "_":
+        #     return {}
+        #
+        # result: Dict[str, Any] = {}
+        # for part in misc_str.split("|"):
+        #     if "=" in part:
+        #         key, _, val = part.partition("=")
+        #         # Декодируем экранированные символы (\n → реальный newline и т.д.)
+        #         val = val.replace("\\n", "\n").replace("\\t", "\t")
+        #         result[key] = val
+        #     else:
+        #         # Одиночный флаг без значения → True
+        #         result[part] = True
+        # return result
 
     def _parse_conllu_output(
         self,
