@@ -471,7 +471,12 @@ def _print_sentence_table(
            1   ...
     """
     if sent_text:
-        print(f"\n  Предложение {sent_idx}:  # text = {sent_text}")
+        # Если sent_text уже содержит лейбл (начинается с '#') — используем как есть,
+        # иначе добавляем стандартный '# text ='
+        if sent_text.startswith("#"):
+            print(f"\n  Предложение {sent_idx}:  {sent_text}")
+        else:
+            print(f"\n  Предложение {sent_idx}:  # text = {sent_text}")
     else:
         print(f"\n  Предложение {sent_idx}:")
 
@@ -608,9 +613,10 @@ def main():
     )
     print(f"\nПредложений получено: {len(result_rd)}")
     for i, tokens in enumerate(result_rd, 1):
-        # sent_text = sents_multi[i - 1].text if i <= len(sents_multi) else ""
-        # _print_sentence_table(i, tokens, sent_text)
-        _print_sentence_table(i, tokens, " ".join(t["form"] for t in tokens))
+        # Не "# text", а явный лейбл для horizontal-ввода
+        udpipe_header = "# udpipe_input = " + " ".join(t["form"] for t in tokens)
+        _print_sentence_table(i, tokens, udpipe_header)
+        # _print_sentence_table(i, tokens, " ".join(t["form"] for t in tokens))
     _print_misc_summary(result_rd, "dict")
     if result_rd:
         print(f"\n  JSON первого токена:")
@@ -625,9 +631,10 @@ def main():
     )
     print(f"Предложений получено: {len(result_rn)}")
     for i, tokens in enumerate(result_rn, 1):
-        # sent_text = sents_multi[i - 1].text if i <= len(sents_multi) else ""
-        # _print_sentence_table(i, tokens, sent_text)
-        _print_sentence_table(i, tokens, " ".join(t["form"] for t in tokens))
+        # Не "# text", а явный лейбл для horizontal-ввода
+        udpipe_header = "# udpipe_input = " + " ".join(t["form"] for t in tokens)
+        _print_sentence_table(i, tokens, udpipe_header)
+        # _print_sentence_table(i, tokens, " ".join(t["form"] for t in tokens))
     _print_misc_summary(result_rn, "native")
     if result_rn:
         print(f"\n  JSON первого токена:")
