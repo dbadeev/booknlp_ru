@@ -154,11 +154,8 @@ class UDPipeService:
         if misc_str == "_":
             return "_" if output_format == "dict" else {}
         if output_format == "native":
-            # уже декодирует \n → newline
             return dict(kv.split("=", 1) for kv in misc_str.split("|") if "=" in kv)
-        # dict-путь: вернуть raw-строку, но с декодированными CoNLL-U escapes
-        return misc_str.replace("\\n", "\n").replace("\\t", "\t")
-
+        return misc_str  # ← dict: возвращаем raw CoNLL-U строку без изменений
 
         # if output_format == "dict":
         #     # Сырая строка CoNLL-U: "_" возвращаем как есть
