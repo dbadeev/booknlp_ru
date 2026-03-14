@@ -212,7 +212,6 @@ class TrankitParser:
         ]
 
     @staticmethod
-    @staticmethod
     def _merge_chunks(
             chunk_results: List[List[List[_T]]],
     ) -> List[List[_T]]:
@@ -275,8 +274,6 @@ class TrankitParser:
             List[List[Dict]] — список предложений, каждое — список токенов
         """
         try:
-            # chunk_results: List[List[List[Dict[str, Any]]]] = []
-
             if tokenizer == "razdel":
                 # Каждый текст обрабатывается независимо (base_offset=0):
                 # start_char токенов относителен начала своего текста, не батча.
@@ -408,7 +405,7 @@ class TrankitParser:
 
             # Восстанавливаем результаты по текстам:
             # all_results[offset : offset + n_chunks] — чанки текста i
-            results: List[List[List[Dict[str, Any]]]] = []
+            results: List[List[List[Any]]] = []
             offset = 0
             for n_chunks in chunks_per_text:
                 results.append(
