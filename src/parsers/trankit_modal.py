@@ -15,7 +15,7 @@ trankit_modal.py — Trankit NLP-сервис на Modal.
   razdel path — parse_sentence_chunk():
       принимает List[Tuple[str, int]] (текст предложения + символьный офсет).
       _make_pretokenized: razdel.tokenize → pretokenized вход для Trankit.
-      Вызывает self.nlp({"text": ..., "tokens": [...]}, is_sent=True) —
+      Вызывает self.nlp(List[str], is_sent=True) — pretokenized режим:
       Trankit пропускает сентенизацию И токенизацию слов.
       Символьные позиции берутся из razdel-spans (не из Trankit-вывода).
 
@@ -354,9 +354,9 @@ class TrankitService:
     def _make_pretokenized(
             sentences_with_offsets: List[Tuple[str, int]],
     ) -> Tuple[
-        List[List[str]],  # ← List[str] — принимается Trankit
-        List[int],
-        List[List[Tuple[int, int]]],
+        List[List[str]],  # token_lists  — входы для self.nlp
+        List[int],  # char_offsets — абс. офсеты предложений
+        List[List[Tuple[int, int]]],  # token_spans  — razdel sentence-local позиции
     ]:
         """
         Razdel path: razdel.tokenize → pretokenized-входы для Trankit.
@@ -367,24 +367,27 @@ class TrankitService:
 
         Для каждого предложения:
             razdel.tokenize(sent_text) → List[Token]
-            pretokenized = {"text": sent_text, "tokens": [t.text, ...]}
-            spans = [(t.start, t.stop), ...] — sentence-local позиции
-
-        Trankit вызывается с is_sent=True и pretokenized-входом —
-        пропускает сентенизацию и токенизацию, только POS/dep/NER.
+            token_list = [t.text, ...]        ← List[str], sentence-local
+            spans      = [(t.start, t.stop)]  ← sentence-local позиции
 
         Trankit pretokenized API: nlp(List[str], is_sent=True).
-        List[str] — список текстов токенов. is_list_strings() = True → проходит assert.
-        Span из Trankit-вывода будут нулевыми/бессмысленными (Trankit не знает
-        исходный текст), но они полностью перекрываются razdel-spans в _process_*.
+            is_list_strings(input) == True → проходит assert в pipeline.py:1047.
+            ВНИМАНИЕ: dict {"text": ..., "tokens": [...]} Trankit НЕ принимает
+            (pipeline.py:1047: assert is_string(input) or is_list_strings(input)).
+
+        Span из Trankit-вывода при pretokenized-режиме нулевые/бессмысленные
+        (Trankit не имеет доступа к исходному тексту), поэтому полностью
+        перекрываются razdel-spans в _process_simplified / _process_native.
 
         Args:
             sentences_with_offsets: List[(sent_text, char_offset)]
+                sent_text:   текст предложения (sentence-local)
+                char_offset: абсолютное смещение предложения в исходном документе
 
         Returns:
-            pretokenized_inputs: List[dict]          — входы для self.nlp
-            char_offsets:        List[int]           — абс. офсеты предложений
-            token_spans:         List[List[(s, e)]]  — razdel sentence-local позиции
+            token_lists:  List[List[str]]             — pretokenized входы для self.nlp
+            char_offsets: List[int]                   — абс. офсеты предложений
+            token_spans:  List[List[Tuple[int, int]]] — razdel sentence-local позиции токенов
         """
         from razdel import tokenize as razdel_tokenize
 
@@ -417,10 +420,9 @@ class TrankitService:
         Внутри Modal: _make_pretokenized() вызывает razdel.tokenize() для
         каждого предложения и формирует pretokenized-вход для Trankit.
 
-        self.nlp({"text": ..., "tokens": [...]}, is_sent=True):
+        self.nlp(List[str], is_sent=True):
             - is_sent=True:      Trankit не сентенизирует
-            - "tokens" в dict:   Trankit пропускает токенизацию слов,
-                                 расставляет только POS/dep/NER
+            - List[str]:     pretokenized режим — Trankit пропускает токенизацию,
 
         Символьные позиции токенов берутся из razdel-spans (не из Trankit).
         Глобальные офсеты: span + char_offset.
@@ -471,7 +473,11 @@ class TrankitService:
             output_format: OutputFormat = "simplified",
     ) -> List[List[Dict[str, Any]]]:
         """
-        Native path. [НОВЫЙ МЕТОД]
+        Trankit path (без razdel-токенизации): принимает List[str] — тексты предложений.
+        [НОВЫЙ МЕТОД]
+
+        "native" в названии означает путь обработки (Trankit-токенизация),
+        а не формат вывода. Поддерживает оба output_format: "simplified" | "native".
 
         Принимает чанк текстов предложений без символьных офсетов.
         Предложения получены через razdel.sentenize() в wrapper — только тексты.
@@ -671,7 +677,7 @@ def main():
         s_offset = chunk_razdel[i][1] if i < len(chunk_razdel) else "?"
         print(f"\n  Предложение {i + 1} (razdel start={s_offset}):")
         print(
-            f"  {'ID':<4} {'FORM':<14} {'LEMMA':<14} {'UPOS':<7} "
+            f" {'ID':<4} {'FORM':<14} {'LEMMA':<14} {'UPOS':<7} {'XPOS':<5} "
             f"{'HEAD':<5} {'DEPREL':<12} {'DEPS':<5} {'MISC':<5} START END"
         )
         print("  " + "-" * 100)

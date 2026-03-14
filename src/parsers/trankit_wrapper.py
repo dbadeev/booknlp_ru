@@ -95,9 +95,12 @@ class TokenDictNative(TypedDict, total=False):
     """
     Полный нативный формат токена Trankit.
 
-    span  — (start, end) sentence-local: позиция в строке предложения.
-    dspan — (start, end) document-level: позиция в исходном документе
-            (= span + char_offset из razdel; при native path = span).
+    span  — (start, end) sentence-local: позиция относительно начала предложения.
+            Корректен при обоих путях.
+    dspan — (start, end) зависит от пути:
+            razdel path (tokenizer="razdel"): глобальные офсеты = span + char_offset.
+            native path (tokenizer="native"): sentence-local = span (char_offset=0).
+            Для глобальных позиций используйте только tokenizer="razdel".
     """
     id:       Union[int, List[int]]  # int или [start, end] для MWT
     text:     str                    # Текстовая форма токена
@@ -108,7 +111,7 @@ class TokenDictNative(TypedDict, total=False):
     head:     int                    # Индекс головы
     deprel:   str                    # Тип синтаксической связи
     span:     Tuple[int, int]        # Sentence-local офсеты
-    dspan:    Tuple[int, int]        # Document-level офсеты
+    dspan:    Tuple[int, int]        # razdel path: глобальные; native path: sentence-local
     ner:      str                    # NER-тег (BIO/BIOES: B-PER, O и т.д.)
     expanded: List[Dict[str, Any]]   # MWT: список словарей под-токенов
     lang:     str                    # Язык предложения (например, "russian")
