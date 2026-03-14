@@ -50,7 +50,7 @@ Wrapper содержит ровно три обязанности:
 import argparse
 import logging
 import sys
-from typing import Any, Dict, List, Literal, Tuple, TypedDict, Union
+from typing import Any, Dict, List, Literal, Tuple, TypedDict, Union, overload
 
 import modal
 from razdel import sentenize
@@ -226,14 +226,31 @@ class TrankitParser:
         return [sent for chunk in chunk_results for sent in chunk]
 
     # ─── Public API ───────────────────────────────────────────────────────────
+    @overload
+    def parse_text(
+            self,
+            text: str,
+            tokenizer: str = ...,
+            output_format: Literal["simplified"] = ...,
+            chunk_size: int = ...,
+    ) -> List[List[TokenDictSimplified]]: ...
+
+    @overload
+    def parse_text(
+            self,
+            text: str,
+            tokenizer: str = ...,
+            output_format: Literal["native"] = ...,
+            chunk_size: int = ...,
+    ) -> List[List[TokenDictNative]]: ...
 
     def parse_text(
-        self,
-        text: str,
-        output_format: OutputFormat = "simplified",
-        tokenizer: TokenizerType = "razdel",
-        chunk_size: int = default_chunk_size,
-    ) -> List[List[Dict[str, Any]]]:
+            self,
+            text: str,
+            tokenizer: str = "razdel",
+            output_format: str = "simplified",
+            chunk_size: int = 50,
+    ) -> List[List[Union[TokenDictSimplified, TokenDictNative]]]:
         """
         Парсит текст через Trankit в Modal.
 
@@ -290,13 +307,33 @@ class TrankitParser:
             self.logger.error(f"❌ parse_text error: {exc}")
             raise
 
+    @overload
     def parse_batch(
-        self,
-        texts: List[str],
-        output_format: OutputFormat = "simplified",
-        tokenizer: TokenizerType = "razdel",
-        chunk_size: int = default_chunk_size,
-    ) -> List[List[List[Dict[str, Any]]]]:
+            self,
+            texts: List[str],
+            tokenizer: str = ...,
+            output_format: Literal["simplified"] = ...,
+            chunk_size: int = ...,
+    ) -> List[List[List[TokenDictSimplified]]]:
+        ...
+
+    @overload
+    def parse_batch(
+            self,
+            texts: List[str],
+            tokenizer: str = ...,
+            output_format: Literal["native"] = ...,
+            chunk_size: int = ...,
+    ) -> List[List[List[TokenDictNative]]]:
+        ...
+
+    def parse_batch(
+            self,
+            texts: List[str],
+            tokenizer: str = "razdel",
+            output_format: str = "simplified",
+            chunk_size: int = 50,
+    ) -> List[List[List[Union[TokenDictSimplified, TokenDictNative]]]]:
         """
         Пакетная обработка нескольких текстов единым .map().
 
@@ -356,12 +393,12 @@ class TrankitParser:
 
                 if len(all_chunks_native) == 1:
                     all_results = [
-                        self.service.parse_sentence_chunk.remote(
+                        self.service.parse_sentence_chunk_native.remote(
                             all_chunks_native[0], output_format=output_format
                         )
                     ]
                 else:
-                    all_results = list(self.service.parse_sentence_chunk.map(
+                    all_results = list(self.service.parse_sentence_chunk_native.map(
                         all_chunks_native, kwargs={"output_format": output_format}
                     ))
 

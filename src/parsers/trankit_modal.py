@@ -93,18 +93,18 @@ def _print_token_simplified(tok: Dict[str, Any]) -> None:
         print(f"       feats: {tok['feats']}")
 
 
-def _print_token_native(tok: Dict[str, Any]) -> None:
-    """Выводит токен в native-формате (все поля Trankit)."""
-    print(f"\n  Text: {tok.get('text')}")
-    print(f"    id: {tok.get('id')}")
-    print(f"    lemma: {tok.get('lemma')}, upos: {tok.get('upos')}, xpos: {tok.get('xpos')}")
-    print(f"    feats: {tok.get('feats')}")
-    print(f"    head: {tok.get('head')}, deprel: {tok.get('deprel')}")
-    print(f"    span: {tok.get('span')}, dspan: {tok.get('dspan')}")
-    print(f"    ner: {tok.get('ner')}")
-    print(f"    lang: {tok.get('lang')}")
-    expanded = tok.get("expanded")
-    print(f"    expanded: {expanded if expanded else '[]'}")
+# def _print_token_native(tok: Dict[str, Any]) -> None:
+#     """Выводит токен в native-формате (все поля Trankit)."""
+#     print(f"\n  Text: {tok.get('text')}")
+#     print(f"    id: {tok.get('id')}")
+#     print(f"    lemma: {tok.get('lemma')}, upos: {tok.get('upos')}, xpos: {tok.get('xpos')}")
+#     print(f"    feats: {tok.get('feats')}")
+#     print(f"    head: {tok.get('head')}, deprel: {tok.get('deprel')}")
+#     print(f"    span: {tok.get('span')}, dspan: {tok.get('dspan')}")
+#     print(f"    ner: {tok.get('ner')}")
+#     print(f"    lang: {tok.get('lang')}")
+#     expanded = tok.get("expanded")
+#     print(f"    expanded: {expanded if expanded else '[]'}")
 
 
 # ─── TrankitService ───────────────────────────────────────────────────────────
