@@ -50,9 +50,7 @@ Wrapper содержит ровно три обязанности:
 import argparse
 import logging
 import sys
-from typing import Any, Dict, List, Literal, Tuple, TypedDict, Union, overload
-
-from typing import TypeVar
+from typing import Any, Dict, List, Literal, Tuple, TypedDict, TypeVar, Union, overload
 
 import modal
 from razdel import sentenize

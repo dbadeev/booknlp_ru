@@ -322,7 +322,7 @@ class TrankitService:
                     "upos": t.get("upos", "_") or "_",
                     "xpos": t.get("xpos", "_") or "_",
                     "feats": t.get("feats", "_") or "_",
-                    "head": t.get("head", 0),
+                    "head": int(t.get("head", 0)),
                     "deprel": t.get("deprel", "_") or "_",
                     "span": span,
                     "dspan": dspan,      # [ИЗМЕНЕНО] скорректирован char_offset
@@ -482,7 +482,6 @@ class TrankitService:
             return TrankitService._process_simplified(doc, char_offset=0)
         except Exception as e:  # noqa: BLE001
             self.logger.error(f"Parse error: {e}")
-            import traceback
             self.logger.error(traceback.format_exc())
             return []
 
@@ -606,10 +605,8 @@ def main():
     )
     print(f"\nresult: {len(result_chunk_s)} предложений")
     for i, sent in enumerate(result_chunk_s):
-        print(
-            f"\n  Предложение {i + 1} "
-            f"(razdel start={chunk_razdel[i][1]}):"
-        )
+        s_offset = chunk_razdel[i][1] if i < len(chunk_razdel) else "?"
+        print(f"\n  Предложение {i + 1} (razdel start={s_offset}):")
         print(
             f"  {'ID':<4} {'FORM':<14} {'LEMMA':<14} {'UPOS':<7} "
             f"{'HEAD':<5} {'DEPREL':<12} {'DEPS':<5} {'MISC':<5} START END"
