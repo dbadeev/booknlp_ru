@@ -276,6 +276,11 @@ class TrankitParser:
                 raise ValueError(
                     f"Unknown tokenizer '{tokenizer}'. Expected 'razdel' or 'native'."
                 )
+            if output_format not in ("simplified", "native"):
+                raise ValueError(
+                    f"Unknown output_format '{output_format}'. "
+                    f"Expected 'simplified' or 'native'."
+                )
             if tokenizer == "razdel":
                 # Каждый текст обрабатывается независимо (base_offset=0):
                 # start_char токенов относителен начала своего текста, не батча.
@@ -363,6 +368,11 @@ class TrankitParser:
             if tokenizer not in ("razdel", "native"):
                 raise ValueError(
                     f"Unknown tokenizer '{tokenizer}'. Expected 'razdel' or 'native'."
+                )
+            if output_format not in ("simplified", "native"):
+                raise ValueError(
+                    f"Unknown output_format '{output_format}'. "
+                    f"Expected 'simplified' or 'native'."
                 )
             if tokenizer == "razdel":
                 all_chunks: List[List[Tuple[str, int]]] = []

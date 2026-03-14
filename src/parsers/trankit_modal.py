@@ -342,9 +342,9 @@ class TrankitService:
 
     @modal.method()
     def parse_sentence_chunk(
-        self,
-        sentences_with_offsets: List[Tuple[str, int]],
-        output_format: str = "simplified",
+            self,
+            sentences_with_offsets: List[Tuple[str, int]],
+            output_format: OutputFormat = "simplified",
     ) -> List[List[Dict[str, Any]]]:
         """
         Razdel path. [НОВЫЙ МЕТОД]
@@ -412,9 +412,9 @@ class TrankitService:
 
     @modal.method()
     def parse_sentence_chunk_native(
-        self,
-        sentences: List[str],
-        output_format: str = "simplified",
+            self,
+            sentences: List[str],
+            output_format: OutputFormat = "simplified",
     ) -> List[List[Dict[str, Any]]]:
         """
         Native path. [НОВЫЙ МЕТОД]
