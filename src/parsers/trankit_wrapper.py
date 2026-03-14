@@ -272,6 +272,10 @@ class TrankitParser:
             List[List[Dict]] — список предложений, каждое — список токенов
         """
         try:
+            if tokenizer not in ("razdel", "native"):
+                raise ValueError(
+                    f"Unknown tokenizer '{tokenizer}'. Expected 'razdel' or 'native'."
+                )
             if tokenizer == "razdel":
                 # Каждый текст обрабатывается независимо (base_offset=0):
                 # start_char токенов относителен начала своего текста, не батча.
@@ -310,7 +314,7 @@ class TrankitParser:
     def parse_batch(
             self,
             texts: List[str],
-            tokenizer: str = ...,
+            tokenizer: TokenizerType = ...,  # было: str
             output_format: Literal["simplified"] = ...,
             chunk_size: int = ...,
     ) -> List[List[List[TokenDictSimplified]]]:
@@ -320,7 +324,7 @@ class TrankitParser:
     def parse_batch(
             self,
             texts: List[str],
-            tokenizer: str = ...,
+            tokenizer: TokenizerType = ...,  # было: str
             output_format: Literal["native"] = ...,
             chunk_size: int = ...,
     ) -> List[List[List[TokenDictNative]]]:
@@ -356,6 +360,10 @@ class TrankitParser:
             # нужно для восстановления границ текстов после единого .map()
             chunks_per_text: List[int] = []
 
+            if tokenizer not in ("razdel", "native"):
+                raise ValueError(
+                    f"Unknown tokenizer '{tokenizer}'. Expected 'razdel' or 'native'."
+                )
             if tokenizer == "razdel":
                 all_chunks: List[List[Tuple[str, int]]] = []
                 for text in texts:

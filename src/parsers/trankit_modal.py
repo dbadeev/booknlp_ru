@@ -661,7 +661,9 @@ def main():
         actual = t0["start_char"]
         # Первый токен может начинаться не с позиции 0 предложения
         # (если предложение начинается с пробела), допустимо >= expected
-        ok = "✅" if actual >= expected else "❌"
+        max_leading_space = 5
+        ok = "✅" if abs(actual - expected) <= max_leading_space else "❌"
+
         print(
             f"  {ok} Предложение {i + 1}: "
             f"razdel_start={expected}, "
