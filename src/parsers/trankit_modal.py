@@ -32,6 +32,7 @@ trankit_modal.py — Trankit NLP-сервис на Modal.
 
 import logging
 import os
+import traceback
 from typing import Any, Dict, List, Literal, Tuple
 
 import modal
@@ -92,21 +93,6 @@ def _print_token_simplified(tok: Dict[str, Any]) -> None:
     if tok.get("feats", "_") != "_":
         print(f"       feats: {tok['feats']}")
 
-
-# def _print_token_native(tok: Dict[str, Any]) -> None:
-#     """Выводит токен в native-формате (все поля Trankit)."""
-#     print(f"\n  Text: {tok.get('text')}")
-#     print(f"    id: {tok.get('id')}")
-#     print(f"    lemma: {tok.get('lemma')}, upos: {tok.get('upos')}, xpos: {tok.get('xpos')}")
-#     print(f"    feats: {tok.get('feats')}")
-#     print(f"    head: {tok.get('head')}, deprel: {tok.get('deprel')}")
-#     print(f"    span: {tok.get('span')}, dspan: {tok.get('dspan')}")
-#     print(f"    ner: {tok.get('ner')}")
-#     print(f"    lang: {tok.get('lang')}")
-#     expanded = tok.get("expanded")
-#     print(f"    expanded: {expanded if expanded else '[]'}")
-
-
 # ─── TrankitService ───────────────────────────────────────────────────────────
 
 @app.cls(image=image, gpu="T4", timeout=600)
@@ -148,16 +134,9 @@ class TrankitService:
             self.logger.info("Trankit loaded successfully from local files!")
         except Exception as e:  # noqa: BLE001
             self.logger.error(f"Failed to initialize Trankit: {e}")
-            # noinspection PyBroadException
-            try:
-                import glob
-                self.logger.info(f"Files in {LOCAL_MODEL_PATH}: "
-                                 f"{glob.glob(f'{LOCAL_MODEL_PATH}/**')}")
-                self.logger.info(f"Files in {LOCAL_MODEL_PATH}/{LANG}: "
-                                 f"{glob.glob(f'{LOCAL_MODEL_PATH}/{LANG}/**')}")
-            except Exception:  # noqa: BLE001
-                pass
+            self.logger.error(traceback.format_exc())
             self.nlp = None
+            raise RuntimeError(f"Trankit initialization failed: {e}") from e
 
     # ─── Вспомогательные методы форматирования ───────────────────────────────
 
@@ -423,7 +402,6 @@ class TrankitService:
                     f"parse_sentence_chunk error "
                     f"(offset={char_offset}, text='{sent_text[:40]}'): {e}"
                 )
-                import traceback
                 self.logger.error(traceback.format_exc())
         return result
 
@@ -482,7 +460,6 @@ class TrankitService:
                     f"parse_sentence_chunk_native error "
                     f"(text='{sent_text[:40]}'): {e}"
                 )
-                import traceback
                 self.logger.error(traceback.format_exc())
         return result
 

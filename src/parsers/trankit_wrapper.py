@@ -233,7 +233,7 @@ class TrankitParser:
     def parse_text(
             self,
             text: str,
-            tokenizer: str = ...,
+            tokenizer: TokenizerType = ...,
             output_format: Literal["simplified"] = ...,
             chunk_size: int = ...,
     ) -> List[List[TokenDictSimplified]]: ...
@@ -242,7 +242,7 @@ class TrankitParser:
     def parse_text(
             self,
             text: str,
-            tokenizer: str = ...,
+            tokenizer: TokenizerType = ...,
             output_format: Literal["native"] = ...,
             chunk_size: int = ...,
     ) -> List[List[TokenDictNative]]: ...
@@ -252,7 +252,7 @@ class TrankitParser:
             text: str,
             tokenizer: str = "razdel",
             output_format: str = "simplified",
-            chunk_size: int = 50,
+            chunk_size: int = default_chunk_size,
     ) -> List[List[Union[TokenDictSimplified, TokenDictNative]]]:
         """
         Парсит текст через Trankit в Modal.
@@ -333,7 +333,7 @@ class TrankitParser:
             texts: List[str],
             tokenizer: str = "razdel",
             output_format: str = "simplified",
-            chunk_size: int = 50,
+            chunk_size: int = default_chunk_size,
     ) -> List[List[List[Union[TokenDictSimplified, TokenDictNative]]]]:
         """
         Пакетная обработка нескольких текстов единым .map().
