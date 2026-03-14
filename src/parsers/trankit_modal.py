@@ -312,7 +312,7 @@ class TrankitService:
             return []
 
         result = []
-        for sent in doc["sentences"]:
+        for sent in sentences:  # ← используем нормализованную переменную
             # Язык предложения — из поля Trankit или fallback
             sent_lang = sent.get("lang") or lang_fallback
 
@@ -419,9 +419,9 @@ class TrankitService:
                 # Оборачиваем в стандартный формат для _process_*
                 wrapped = {"sentences": [sent_dict]}
                 if output_format == "native":
-                    processed = self._process_native(wrapped, char_offset=char_offset)
+                    processed = TrankitService._process_native(wrapped, char_offset=char_offset)
                 else:
-                    processed = self._process_simplified(wrapped, char_offset=char_offset)
+                    processed = TrankitService._process_simplified(wrapped, char_offset=char_offset)
                 result.extend(processed)
             return result
 
@@ -473,9 +473,9 @@ class TrankitService:
             for sent_dict in doc.get("sentences", []):
                 wrapped = {"sentences": [sent_dict]}
                 if output_format == "native":
-                    processed = self._process_native(wrapped, char_offset=0)
+                    processed = TrankitService._process_native(wrapped, char_offset=0)
                 else:
-                    processed = self._process_simplified(wrapped, char_offset=0)
+                    processed = TrankitService._process_simplified(wrapped, char_offset=0)
                 result.extend(processed)
             return result
 
@@ -499,8 +499,8 @@ class TrankitService:
         try:
             doc = self.nlp(text)
             if output_format == "native":
-                return self._process_native(doc, char_offset=0)
-            return self._process_simplified(doc, char_offset=0)
+                return TrankitService._process_native(doc, char_offset=0)
+            return TrankitService._process_simplified(doc, char_offset=0)
         except Exception as e:  # noqa: BLE001
             self.logger.error(f"Parse error: {e}")
             import traceback
