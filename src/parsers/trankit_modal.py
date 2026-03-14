@@ -405,31 +405,26 @@ class TrankitService:
         if not filtered:
             return []
 
-        sent_texts = [text for text, _ in filtered]
-        char_offsets = [offset for _, offset in filtered]
-
-        try:
-            # [ИСПРАВЛЕНО] Передаём список → Trankit возвращает {"sentences": [...]}
-            # is_sent=True: Trankit пропускает внутреннюю сентенизацию
-            doc = self.nlp(sent_texts, is_sent=True)
-
-            result: List[List[Dict[str, Any]]] = []
-            # Каждое предложение из doc["sentences"] обрабатываем со своим char_offset
-            for sent_dict, char_offset in zip(doc.get("sentences", []), char_offsets):
-                # Оборачиваем в стандартный формат для _process_*
-                wrapped = {"sentences": [sent_dict]}
+        result: List[List[Dict[str, Any]]] = []
+        for sent_text, char_offset in filtered:
+            try:
+                # nlp(str, is_sent=True) → {"tokens": [...]}
+                # _process_* обрабатывает этот формат через нормализацию
+                doc = self.nlp(sent_text, is_sent=True)
                 if output_format == "native":
-                    processed = TrankitService._process_native(wrapped, char_offset=char_offset)
+                    processed = self._process_native(doc, char_offset=char_offset)
                 else:
-                    processed = TrankitService._process_simplified(wrapped, char_offset=char_offset)
+                    processed = self._process_simplified(doc, char_offset=char_offset)
                 result.extend(processed)
-            return result
+            except Exception as e:  # noqa: BLE001
+                self.logger.error(
+                    f"parse_sentence_chunk error "
+                    f"(offset={char_offset}, text='{sent_text[:40]}'): {e}"
+                )
+                import traceback
+                self.logger.error(traceback.format_exc())
+        return result
 
-        except Exception as e:  # noqa: BLE001
-            self.logger.error(f"parse_sentence_chunk error: {e}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            return []
 
     @modal.method()
     def parse_sentence_chunk_native(
@@ -465,25 +460,24 @@ class TrankitService:
         if not filtered:
             return []
 
-        try:
-            # [ИСПРАВЛЕНО] Один вызов для всего чанка
-            doc = self.nlp(filtered, is_sent=True)
-
-            result: List[List[Dict[str, Any]]] = []
-            for sent_dict in doc.get("sentences", []):
-                wrapped = {"sentences": [sent_dict]}
+        result: List[List[Dict[str, Any]]] = []
+        for sent_text in filtered:
+            try:
+                doc = self.nlp(sent_text, is_sent=True)
                 if output_format == "native":
-                    processed = TrankitService._process_native(wrapped, char_offset=0)
+                    processed = self._process_native(doc, char_offset=0)
                 else:
-                    processed = TrankitService._process_simplified(wrapped, char_offset=0)
+                    processed = self._process_simplified(doc, char_offset=0)
                 result.extend(processed)
-            return result
+            except Exception as e:  # noqa: BLE001
+                self.logger.error(
+                    f"parse_sentence_chunk_native error "
+                    f"(text='{sent_text[:40]}'): {e}"
+                )
+                import traceback
+                self.logger.error(traceback.format_exc())
+        return result
 
-        except Exception as e:  # noqa: BLE001
-            self.logger.error(f"parse_sentence_chunk_native error: {e}")
-            import traceback
-            self.logger.error(traceback.format_exc())
-            return []
     # ─── Backward compat / local_entrypoint ──────────────────────────────────
 
     def _parse_text_internal(
