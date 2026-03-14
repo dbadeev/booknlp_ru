@@ -374,11 +374,12 @@ class TrankitService:
         is_sent=True — Trankit пропускает внутреннюю сентенизацию,
         обрабатывает строку как одно готовое предложение.
 
-        [ИСПРАВЛЕНО] Trankit вызывается ОДИН РАЗ для всего чанка через список строк.
-        nlp(List[str], is_sent=True) → {"sentences": [...]} — стандартный формат.
-        Предыдущая версия вызывала nlp(str, is_sent=True) в цикле →
-        возвращало {"tokens": [...]} без ключа "sentences" → _process_* возвращал [].
-        Офсеты применяются поэлементно: zip(doc["sentences"], char_offsets).
+        Trankit вызывается в цикле: по одному предложению за вызов.
+        nlp(str, is_sent=True) → {"tokens": [...]} (sentence-level формат).
+        Предыдущая неверная версия передавала List[str] одним вызовом —
+        Trankit интерпретировал каждую строку как отдельное слово, возвращал
+        {"tokens": [...]} без ключа "sentences" → zip(doc["sentences"], ...) = пусто.
+        _process_* обрабатывает {"tokens": [...]} через нормализацию: sentences = [doc].
 
         Глобальные офсеты токенов:
             start_char = span[0] + char_offset   (simplified)
@@ -445,7 +446,13 @@ class TrankitService:
         начала каждого предложения (char_offset=0). Это осознанное ограничение:
         для получения глобальных позиций используйте razdel path
         (parse_sentence_chunk).
-        [ИСПРАВЛЕНО] передаём список строк, а не итерируемся с nlp(str, is_sent=True).
+
+        Trankit вызывается в цикле: по одному предложению за вызов.
+        nlp(str, is_sent=True) → {"tokens": [...]} (sentence-level формат).
+        Предыдущая неверная версия передавала List[str] одним вызовом —
+        Trankit интерпретировал каждую строку как отдельное слово, возвращал
+        {"tokens": [...]} без ключа "sentences" → zip(doc["sentences"], ...) = пусто.
+        _process_* обрабатывает {"tokens": [...]} через нормализацию: sentences = [doc].
 
         Args:
             sentences: List[str] — тексты предложений чанка

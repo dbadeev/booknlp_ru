@@ -254,8 +254,12 @@ class TrankitParser:
             List[List[Dict]] — список предложений, каждое — список токенов
         """
         try:
+            chunk_results: List[List[List[Dict[str, Any]]]] = []
+
             if tokenizer == "razdel":
-                chunks = self._split_to_chunks(text, chunk_size)
+                # Каждый текст обрабатывается независимо (base_offset=0):
+                # start_char токенов относителен начала своего текста, не батча.
+                chunks = self._split_to_chunks(text, chunk_size, base_offset=0)
                 if not chunks:
                     return []
                 # Один чанк: .remote() дешевле (нет накладных расходов .map())
@@ -268,7 +272,7 @@ class TrankitParser:
                     chunks, kwargs={"output_format": output_format}
                 ))
 
-            else:  # native
+            else:  # tokenizer == "native"
                 chunks_native = self._split_to_sentence_chunks(text, chunk_size)
                 if not chunks_native:
                     return []
@@ -319,16 +323,26 @@ class TrankitParser:
             if tokenizer == "razdel":
                 all_chunks: List[List[Tuple[str, int]]] = []
                 for text in texts:
-                    text_chunks = self._split_to_chunks(text, chunk_size)
+                    # Каждый текст обрабатывается независимо (base_offset=0):
+                    # start_char токенов относителен начала своего текста, не батча.
+                    text_chunks = self._split_to_chunks(text, chunk_size, base_offset=0)
                     chunks_per_text.append(len(text_chunks))
                     all_chunks.extend(text_chunks)
 
                 if not all_chunks:
                     return [[] for _ in texts]
 
-                all_results = list(self.service.parse_sentence_chunk.map(
-                    all_chunks, kwargs={"output_format": output_format}
-                ))
+                # ── оптимизация: один чанк не требует .map() ──
+                if len(all_chunks) == 1:
+                    all_results = [
+                        self.service.parse_sentence_chunk.remote(
+                            all_chunks[0], output_format=output_format
+                        )
+                    ]
+                else:
+                    all_results = list(self.service.parse_sentence_chunk.map(
+                        all_chunks, kwargs={"output_format": output_format}
+                    ))
 
             else:  # native
                 all_chunks_native: List[List[str]] = []
@@ -340,9 +354,16 @@ class TrankitParser:
                 if not all_chunks_native:
                     return [[] for _ in texts]
 
-                all_results = list(self.service.parse_sentence_chunk_native.map(
-                    all_chunks_native, kwargs={"output_format": output_format}
-                ))
+                if len(all_chunks_native) == 1:
+                    all_results = [
+                        self.service.parse_sentence_chunk.remote(
+                            all_chunks_native[0], output_format=output_format
+                        )
+                    ]
+                else:
+                    all_results = list(self.service.parse_sentence_chunk.map(
+                        all_chunks_native, kwargs={"output_format": output_format}
+                    ))
 
             # Восстанавливаем результаты по текстам:
             # all_results[offset : offset + n_chunks] — чанки текста i
