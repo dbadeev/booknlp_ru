@@ -148,6 +148,7 @@ class TrankitService:
             self.logger.info("Trankit loaded successfully from local files!")
         except Exception as e:  # noqa: BLE001
             self.logger.error(f"Failed to initialize Trankit: {e}")
+            # noinspection PyBroadException
             try:
                 import glob
                 self.logger.info(f"Files in {LOCAL_MODEL_PATH}: "

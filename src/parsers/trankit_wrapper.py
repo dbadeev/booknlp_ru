@@ -52,10 +52,13 @@ import logging
 import sys
 from typing import Any, Dict, List, Literal, Tuple, TypedDict, Union, overload
 
+from typing import TypeVar
+
 import modal
 from razdel import sentenize
 
 # ─── Типы ─────────────────────────────────────────────────────────────────────
+_T = TypeVar("_T")
 
 OutputFormat  = Literal["simplified", "native"]
 TokenizerType = Literal["razdel", "native"]
@@ -209,9 +212,10 @@ class TrankitParser:
         ]
 
     @staticmethod
+    @staticmethod
     def _merge_chunks(
-        chunk_results: List[List[List[Dict[str, Any]]]],
-    ) -> List[List[Dict[str, Any]]]:
+            chunk_results: List[List[List[_T]]],
+    ) -> List[List[_T]]:
         """
         Склеивает результаты чанков в единый список предложений.
 
@@ -271,7 +275,7 @@ class TrankitParser:
             List[List[Dict]] — список предложений, каждое — список токенов
         """
         try:
-            chunk_results: List[List[List[Dict[str, Any]]]] = []
+            # chunk_results: List[List[List[Dict[str, Any]]]] = []
 
             if tokenizer == "razdel":
                 # Каждый текст обрабатывается независимо (base_offset=0):
@@ -288,6 +292,7 @@ class TrankitParser:
                 chunk_results = list(self.service.parse_sentence_chunk.map(
                     chunks, kwargs={"output_format": output_format}
                 ))
+                return self._merge_chunks(chunk_results)
 
             else:  # tokenizer == "native"
                 chunks_native = self._split_to_sentence_chunks(text, chunk_size)
@@ -300,8 +305,7 @@ class TrankitParser:
                 chunk_results = list(self.service.parse_sentence_chunk_native.map(
                     chunks_native, kwargs={"output_format": output_format}
                 ))
-
-            return self._merge_chunks(chunk_results)
+                return self._merge_chunks(chunk_results)
 
         except Exception as exc:
             self.logger.error(f"❌ parse_text error: {exc}")
@@ -420,14 +424,14 @@ class TrankitParser:
 
 # ─── Вспомогательные функции вывода ──────────────────────────────────────────
 
-def _print_simplified(result: List[List[Dict[str, Any]]], title: str = "") -> None:
+def _print_simplified(result: List[List[Any]], title: str = "") -> None:
     """Выводит результат в simplified (CoNLL-U) формате."""
     if title:
         print(f"\n{title}")
-    for s_idx, sent in enumerate(result, 1):
+    for sent_idx, sent in enumerate(result, 1):
         if not sent:
             continue
-        print(f"\n  Предложение {s_idx}:")
+        print(f"\n  Предложение {sent_idx}:")
         print(
             f"  {'ID':<4} {'FORM':<14} {'LEMMA':<14} {'UPOS':<7} {'XPOS':<5} "
             f"{'HEAD':<5} {'DEPREL':<12} {'DEPS':<5} {'MISC':<5} START END"
@@ -445,14 +449,14 @@ def _print_simplified(result: List[List[Dict[str, Any]]], title: str = "") -> No
                 print(f"       feats: {t['feats']}")
 
 
-def _print_native(result: List[List[Dict[str, Any]]], title: str = "") -> None:
+def _print_native(result: List[List[Any]], title: str = "") -> None:
     """Выводит результат в native-формате (все поля Trankit)."""
     if title:
         print(f"\n{title}")
-    for s_idx, sent in enumerate(result, 1):
+    for sent_idx, sent in enumerate(result, 1):
         if not sent:
             continue
-        print(f"\n  Предложение {s_idx}:")
+        print(f"\n  Предложение {sent_idx}:")
         print(
             f"  {'ID':<4} {'TEXT':<14} {'LEMMA':<14} {'UPOS':<7} "
             f"{'HEAD':<5} {'DEPREL':<12} span           dspan          "
