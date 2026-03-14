@@ -214,6 +214,10 @@ class TrankitService:
                 tid = t.get("id", 0)
                 if isinstance(tid, list):
                     tid = tid[0] if tid else 0
+                try:
+                    tid_int = int(tid)
+                except (TypeError, ValueError):
+                    tid_int = 0
 
                 # Sentence-local офсеты + глобальное смещение из razdel
                 local_start, local_end = TrankitService._extract_span(t)
@@ -227,7 +231,7 @@ class TrankitService:
                 lemma = t.get("lemma") or t.get("text", "") or ""
 
                 sent_tokens.append({
-                    "id": int(tid) if str(tid).isdigit() else 0,
+                    "id": tid_int,
                     "form": t.get("text", ""),
                     "lemma": lemma,
                     "upos": upos,
@@ -316,7 +320,7 @@ class TrankitService:
                 dspan = (span[0] + char_offset, span[1] + char_offset)
 
                 sent_tokens.append({
-                    "id": t.get("id"),
+                    "id": t.get("id", 0),
                     "text": t.get("text", ""),
                     "lemma": t.get("lemma", "") or "",
                     "upos": t.get("upos", "_") or "_",
@@ -478,8 +482,8 @@ class TrankitService:
         try:
             doc = self.nlp(text)
             if output_format == "native":
-                return TrankitService._process_native(doc, char_offset=0)
-            return TrankitService._process_simplified(doc, char_offset=0)
+                return self._process_native(doc, char_offset=0)
+            return self._process_simplified(doc, char_offset=0)
         except Exception as e:  # noqa: BLE001
             self.logger.error(f"Parse error: {e}")
             self.logger.error(traceback.format_exc())
