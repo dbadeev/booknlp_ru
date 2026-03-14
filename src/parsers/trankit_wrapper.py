@@ -601,7 +601,7 @@ if __name__ == "__main__":
     print("  " + "─" * 54)
     for s_idx, (s_r, s_n) in enumerate(zip(res_razdel, res_native_tok), 1):
         for t_r, t_n in zip(s_r, s_n):
-            match = "✅" if t_r["start_char"] == t_n["start_char"] else "⚠️ "
+            match = "✅" if t_r["start_char"] == t_n["start_char"] else "⚠️"
             print(
                 f"  {s_idx:<8} {t_r['form']:<14} "
                 f"{t_r['start_char']:<14} {t_n['start_char']:<14} {match}"
