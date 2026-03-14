@@ -206,6 +206,9 @@ class TrankitService:
         добавляется к span для получения глобальных позиций.
         [НОВОЕ] Поля deps и misc (всегда "_") — для полного CoNLL-U.
         [ИЗМЕНЕНО] Fallback: span → dspan → (0, 0) через _extract_span.
+        [ИСПРАВЛЕНО] Обрабатывает оба формата вывода Trankit:
+            - doc-level:      {"sentences": [...]}  ← nlp(text) и nlp(list, is_sent=True)
+            - sentence-level: {"tokens": [...]}     ← nlp(str, is_sent=True)
 
         Args:
             doc: нативный вывод trankit.Pipeline()
@@ -213,11 +216,18 @@ class TrankitService:
         Returns:
             List[List[Dict]]: список предложений → список токенов
         """
-        if "sentences" not in doc:
+        # [ИСПРАВЛЕНО] Нормализация входного формата:
+        # nlp(str, is_sent=True) возвращает sentence-level dict без "sentences"
+        if "sentences" in doc:
+            sentences = doc["sentences"]
+        elif "tokens" in doc:
+            # Оборачиваем одиночное предложение в стандартный формат
+            sentences = [doc]
+        else:
             return []
 
         result = []
-        for sent in doc["sentences"]:
+        for sent in sentences:
             sent_tokens = []
             for t in sent["tokens"]:
                 # ID токена: для MWT может быть списком — берём первый элемент
@@ -245,9 +255,9 @@ class TrankitService:
                     "feats": feats,
                     "head": int(t.get("head", 0)),
                     "deprel": t.get("deprel", "_") or "_",
-                    # [НОВОЕ] Enhanced Dependencies — не поддерживается Trankit
+                    # Enhanced Dependencies — не поддерживается Trankit
                     "deps": "_",
-                    # [НОВОЕ] SpaceAfter и пр. — не поддерживается Trankit
+                    # SpaceAfter и пр. — не поддерживается Trankit
                     "misc": "_",
                     "start_char": start_char,
                     "end_char": end_char,
@@ -284,6 +294,7 @@ class TrankitService:
         [ИЗМЕНЕНО] dspan = span + char_offset (а не берётся из Trankit-вывода).
         При is_sent=True Trankit возвращает dspan=span (sentence-local),
         поэтому глобальный dspan вычисляется здесь.
+        [ИСПРАВЛЕНО] Обрабатывает оба формата вывода Trankit (аналогично _process_simplified).
 
         Args:
             doc: нативный вывод trankit.Pipeline()
@@ -292,7 +303,12 @@ class TrankitService:
         Returns:
             List[List[Dict]]: список предложений → список токенов
         """
-        if "sentences" not in doc:
+        # Нормализация входного формата
+        if "sentences" in doc:
+            sentences = doc["sentences"]
+        elif "tokens" in doc:
+            sentences = [doc]
+        else:
             return []
 
         result = []
@@ -358,6 +374,12 @@ class TrankitService:
         is_sent=True — Trankit пропускает внутреннюю сентенизацию,
         обрабатывает строку как одно готовое предложение.
 
+        [ИСПРАВЛЕНО] Trankit вызывается ОДИН РАЗ для всего чанка через список строк.
+        nlp(List[str], is_sent=True) → {"sentences": [...]} — стандартный формат.
+        Предыдущая версия вызывала nlp(str, is_sent=True) в цикле →
+        возвращало {"tokens": [...]} без ключа "sentences" → _process_* возвращал [].
+        Офсеты применяются поэлементно: zip(doc["sentences"], char_offsets).
+
         Глобальные офсеты токенов:
             start_char = span[0] + char_offset   (simplified)
             dspan      = span + char_offset       (native)
@@ -374,24 +396,40 @@ class TrankitService:
         if self.nlp is None or not sentences_with_offsets:
             return []
 
-        result: List[List[Dict[str, Any]]] = []
-        for sent_text, char_offset in sentences_with_offsets:
-            if not sent_text.strip():
-                continue
-            try:
-                # is_sent=True: Trankit пропускает сентенизацию
-                doc = self.nlp(sent_text, is_sent=True)
+        # Фильтруем пустые предложения, сохраняя соответствие офсетов
+        filtered = [
+            (text, offset)
+            for text, offset in sentences_with_offsets
+            if text.strip()
+        ]
+        if not filtered:
+            return []
+
+        sent_texts = [text for text, _ in filtered]
+        char_offsets = [offset for _, offset in filtered]
+
+        try:
+            # [ИСПРАВЛЕНО] Передаём список → Trankit возвращает {"sentences": [...]}
+            # is_sent=True: Trankit пропускает внутреннюю сентенизацию
+            doc = self.nlp(sent_texts, is_sent=True)
+
+            result: List[List[Dict[str, Any]]] = []
+            # Каждое предложение из doc["sentences"] обрабатываем со своим char_offset
+            for sent_dict, char_offset in zip(doc.get("sentences", []), char_offsets):
+                # Оборачиваем в стандартный формат для _process_*
+                wrapped = {"sentences": [sent_dict]}
                 if output_format == "native":
-                    processed = self._process_native(doc, char_offset=char_offset)
+                    processed = self._process_native(wrapped, char_offset=char_offset)
                 else:
-                    processed = self._process_simplified(doc, char_offset=char_offset)
+                    processed = self._process_simplified(wrapped, char_offset=char_offset)
                 result.extend(processed)
-            except Exception as e:  # noqa: BLE001
-                self.logger.error(
-                    f"parse_sentence_chunk error "
-                    f"(offset={char_offset}, text='{sent_text[:30]}'): {e}"
-                )
-        return result
+            return result
+
+        except Exception as e:  # noqa: BLE001
+            self.logger.error(f"parse_sentence_chunk error: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return []
 
     @modal.method()
     def parse_sentence_chunk_native(
@@ -412,6 +450,7 @@ class TrankitService:
         начала каждого предложения (char_offset=0). Это осознанное ограничение:
         для получения глобальных позиций используйте razdel path
         (parse_sentence_chunk).
+        [ИСПРАВЛЕНО] передаём список строк, а не итерируемся с nlp(str, is_sent=True).
 
         Args:
             sentences: List[str] — тексты предложений чанка
@@ -422,25 +461,29 @@ class TrankitService:
         if self.nlp is None or not sentences:
             return []
 
-        result: List[List[Dict[str, Any]]] = []
-        for sent_text in sentences:
-            if not sent_text.strip():
-                continue
-            try:
-                # is_sent=True: Trankit пропускает сентенизацию
-                doc = self.nlp(sent_text, is_sent=True)
-                if output_format == "native":
-                    processed = self._process_native(doc, char_offset=0)
-                else:
-                    processed = self._process_simplified(doc, char_offset=0)
-                result.extend(processed)
-            except Exception as e:  # noqa: BLE001
-                self.logger.error(
-                    f"parse_sentence_chunk_native error "
-                    f"(text='{sent_text[:30]}'): {e}"
-                )
-        return result
+        filtered = [s for s in sentences if s.strip()]
+        if not filtered:
+            return []
 
+        try:
+            # [ИСПРАВЛЕНО] Один вызов для всего чанка
+            doc = self.nlp(filtered, is_sent=True)
+
+            result: List[List[Dict[str, Any]]] = []
+            for sent_dict in doc.get("sentences", []):
+                wrapped = {"sentences": [sent_dict]}
+                if output_format == "native":
+                    processed = self._process_native(wrapped, char_offset=0)
+                else:
+                    processed = self._process_simplified(wrapped, char_offset=0)
+                result.extend(processed)
+            return result
+
+        except Exception as e:  # noqa: BLE001
+            self.logger.error(f"parse_sentence_chunk_native error: {e}")
+            import traceback
+            self.logger.error(traceback.format_exc())
+            return []
     # ─── Backward compat / local_entrypoint ──────────────────────────────────
 
     def _parse_text_internal(
