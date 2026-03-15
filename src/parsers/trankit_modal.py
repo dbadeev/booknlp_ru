@@ -677,10 +677,10 @@ def main():
         s_offset = chunk_razdel[i][1] if i < len(chunk_razdel) else "?"
         print(f"\n  Предложение {i + 1} (razdel start={s_offset}):")
         print(
-            f" {'ID':<4} {'FORM':<14} {'LEMMA':<14} {'UPOS':<7} {'XPOS':<5} "
+            f"  {'ID':<4} {'FORM':<14} {'LEMMA':<14} {'UPOS':<7} {'XPOS':<5} "
             f"{'HEAD':<5} {'DEPREL':<12} {'DEPS':<5} {'MISC':<5} START END"
         )
-        print("  " + "-" * 100)
+        print("  " + "-" * 110)
         for t in sent:
             _print_token_simplified(t)
 

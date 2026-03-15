@@ -564,6 +564,15 @@ if __name__ == "__main__":
     _print_native(res_2)
     print(f"\nКлючи токена: {list(res_2[0][0].keys()) if res_2 else '—'}")
 
+    res_2_multi = parser.parse_text(
+        text_multi, output_format="native", tokenizer="razdel",
+    )
+    print("\n  Проверка dspan (sentence 2, token[0]):")
+    if len(res_2_multi) > 1:
+        t0 = res_2_multi[1][0]
+        ok = "✅" if t0["dspan"][0] > 0 else "❌"
+        print(f"  {ok} dspan[0]={t0['dspan'][0]}, span[0]={t0['span'][0]}, text='{t0['text']}'")
+
     # ── Вариант 3: simplified + native ───────────────────────────────────────
     print(f"\n{sep}")
     print("ВАРИАНТ 3: simplified + native (sentence-local офсеты)")
@@ -603,6 +612,14 @@ if __name__ == "__main__":
     print(f"\n  {'Предл.':<8} {'Токен':<14} {'razdel start':<14} {'native start':<14}")
     print("  " + "─" * 54)
     for s_idx, (s_r, s_n) in enumerate(zip(res_razdel, res_native_tok), 1):
+        # Разное число токенов = разная токенизация → сравнение бессмысленно
+        if len(s_r) != len(s_n):
+            print(
+                f"  {'⚠️ НЕСОВМЕСТИМО':<8} предложение {s_idx}: "
+                f"razdel={len(s_r)} токенов, native={len(s_n)} токенов — "
+                f"разная токенизация, сравнение пропущено"
+            )
+            continue
         for t_r, t_n in zip(s_r, s_n):
             match = "✅" if t_r["start_char"] == t_n["start_char"] else "⚠️"
             print(
