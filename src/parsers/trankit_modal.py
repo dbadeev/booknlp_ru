@@ -496,9 +496,11 @@ class TrankitService:
         Trankit интерпретировал каждую строку как отдельное слово, возвращал
         {"tokens": [...]} без ключа "sentences" → zip(doc["sentences"], ...) = пусто.
         _process_* обрабатывает {"tokens": [...]} через нормализацию: sentences = [doc].
-        [ИЗМЕНЕНО] Пакетный вызов: self.nlp(List[str]) вместо цикла.
-        ВНИМАНИЕ: токенизация выполняется Trankit, а не razdel.
-        Для razdel-токенизации с глобальными офсетами → parse_sentence_chunk().
+        Последовательный вызов: self.nlp(str, is_sent=True) на каждое предложение.
+        Пакетный режим Trankit (nlp(List[str])) НЕ поддерживается —
+        pipeline.py:1073 принимает только str или List[List[str]] (pretokenized).
+        List[str] без is_sent=True вызывает AssertionError.
+        Токенизация выполняется Trankit внутри каждого вызова.
 
         Args:
             sentences: List[str] — тексты предложений чанка
@@ -512,32 +514,21 @@ class TrankitService:
         filtered = [s for s in sentences if s.strip()]
         if not filtered:
             return []
-        try:
-            # nlp(List[str]) без is_sent=True — пакетный режим:
-            # каждая строка = отдельное предложение с внутренней токенизацией Trankit.
-            # Возвращает {"sentences": [...]} — обрабатывается _process_* штатно.
-            doc = self.nlp(filtered)
-            if output_format == "native":
-                return self._process_native(doc, char_offset=0)
-            return self._process_simplified(doc, char_offset=0)
-        except Exception as e:  # noqa: BLE001
-            self.logger.error(f"parse_sentence_chunk_native error: {e}")
-            self.logger.error(traceback.format_exc())
-            # Fallback: деградируем до последовательной обработки
-            result: List[List[Dict[str, Any]]] = []
-            for sent_text in filtered:
-                try:
-                    doc = self.nlp(sent_text, is_sent=True)
-                    if output_format == "native":
-                        result.extend(self._process_native(doc, char_offset=0))
-                    else:
-                        result.extend(self._process_simplified(doc, char_offset=0))
-                except Exception as inner_e:  # noqa: BLE001
-                    self.logger.error(
-                        f"parse_sentence_chunk_native fallback error "
-                        f"(text='{sent_text[:40]}'): {inner_e}"
-                    )
-            return result
+        result: List[List[Dict[str, Any]]] = []
+        for sent_text in filtered:
+            try:
+                doc = self.nlp(sent_text, is_sent=True)
+                if output_format == "native":
+                    result.extend(self._process_native(doc, char_offset=0))
+                else:
+                    result.extend(self._process_simplified(doc, char_offset=0))
+            except Exception as e:  # noqa: BLE001
+                self.logger.error(
+                    f"parse_sentence_chunk_native error "
+                    f"(text='{sent_text[:40]}'): {e}"
+                )
+                self.logger.error(traceback.format_exc())
+        return result
 
     # ─── Backward compat / local_entrypoint ──────────────────────────────────
 
