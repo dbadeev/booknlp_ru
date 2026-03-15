@@ -611,6 +611,11 @@ if __name__ == "__main__":
     )
     print(f"\n  {'Предл.':<8} {'Токен':<14} {'razdel start':<14} {'native start':<14}")
     print("  " + "─" * 54)
+    print(
+        "\n  Легенда: ✅ совпадают  "
+        "△ ожидаемо (native=sentence-local, razdel=global)  "
+        "⚠️ НЕСОВМЕСТИМО (разная токенизация)"
+    )
     for s_idx, (s_r, s_n) in enumerate(zip(res_razdel, res_native_tok), 1):
         # Разное число токенов = разная токенизация → сравнение бессмысленно
         if len(s_r) != len(s_n):
@@ -626,11 +631,7 @@ if __name__ == "__main__":
                 f"  {s_idx:<8} {t_r['form']:<14} "
                 f"{t_r['start_char']:<14} {t_n['start_char']:<14} {match}"
             )
-        print(
-            "\n  Легенда: ✅ совпадают  "
-            "△ ожидаемо (native=sentence-local, razdel=global)  "
-            "⚠️ НЕСОВМЕСТИМО (разная токенизация)"
-        )
+
     # ── parse_batch ───────────────────────────────────────────────────────────
     print(f"\n{sep}")
     print("BATCH: simplified + razdel (2 текста)")
