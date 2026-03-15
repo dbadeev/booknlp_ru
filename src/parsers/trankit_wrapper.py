@@ -621,12 +621,16 @@ if __name__ == "__main__":
             )
             continue
         for t_r, t_n in zip(s_r, s_n):
-            match = "✅" if t_r["start_char"] == t_n["start_char"] else "⚠️"
+            match = "✅" if t_r["start_char"] == t_n["start_char"] else "△"
             print(
                 f"  {s_idx:<8} {t_r['form']:<14} "
                 f"{t_r['start_char']:<14} {t_n['start_char']:<14} {match}"
             )
-
+        print(
+            "\n  Легенда: ✅ совпадают  "
+            "△ ожидаемо (native=sentence-local, razdel=global)  "
+            "⚠️ НЕСОВМЕСТИМО (разная токенизация)"
+        )
     # ── parse_batch ───────────────────────────────────────────────────────────
     print(f"\n{sep}")
     print("BATCH: simplified + razdel (2 текста)")
