@@ -96,7 +96,12 @@ def _print_token_simplified(tok: Dict[str, Any]) -> None:
 
 # ─── TrankitService ───────────────────────────────────────────────────────────
 
-@app.cls(image=image, gpu="T4", timeout=600)
+@app.cls(
+    image=image,
+    gpu="T4",
+    timeout=600,
+    scaledown_window=120,  # Контейнер живёт 2 мин после последнего запроса
+)
 class TrankitService:
     """Trankit NLP-сервис с поддержкой CUDA и chunked-обработки."""
 
