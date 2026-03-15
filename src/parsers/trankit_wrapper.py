@@ -612,7 +612,7 @@ if __name__ == "__main__":
     print(f"\n  {'Предл.':<8} {'Токен':<14} {'razdel start':<14} {'native start':<14}")
     print("  " + "─" * 54)
     print(
-        "\n  Легенда: ✅ совпадают  "
+        "  Легенда: ✅ совпадают  "
         "△ ожидаемо (native=sentence-local, razdel=global)  "
         "⚠️ НЕСОВМЕСТИМО (разная токенизация)"
     )
