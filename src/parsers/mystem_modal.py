@@ -164,29 +164,28 @@ class MystemService:
         return results
 
     # ========= УТИЛИТЫ ДЛЯ ОБРАБОТКИ РЕЗУЛЬТАТА MYSTEM =========
-
     def _process_native(self, analysis: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Полный нативный формат: один список токенов для одного предложения.
         analysis — результат mystem.analyze(строка).
         """
-        tokens: List[Dict[str, Any]] = []
+        tokens = []
         for item in analysis:
-            token_text = item.get("text", "")
+            token_text = (item.get("text") or "").strip()
             if not token_text:
                 continue
-            token_text = token_text.strip()
-            if not token_text:
-                continue
-
+            ana = item.get("analysis") or []
+            # Добавляем явную пометку пунктуации
             native_token = {
                 "id": len(tokens) + 1,
                 "text": token_text,
                 # analysis: полный список вариантов, как отдаёт mystem
-                "analysis": item.get("analysis", []),
+                "analysis": ana,
+                "is_punct": bool(all(ch in PUNCT_CHARS for ch in token_text) and not ana),
             }
             tokens.append(native_token)
         return tokens
+
 
     def _process_simplified(self, analysis: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -214,7 +213,7 @@ class MystemService:
                 best = analyses[0]
                 lemma = best.get("lex", token_text.lower())
                 gr_full = best.get("gr", "")
-                gr_pos = re.split(r"[\[,=]", gr_full)[0]
+                gr_pos = re.split(r"[,\[=]", gr_full)[0]
                 upos = MYSTEM_TO_UPOS.get(gr_pos, "X")
 
                 # Всё, что не пошло в LEMMA/UPOS, кодируем в MISC:
@@ -288,7 +287,7 @@ def main():
                 print(f"      [{j}] lex={lex}, gr={gr}{(', ' + extra_str) if extra_str else ''}")
 
     # ========== 2. EXTERNAL + CONLLU ==========
-    print("\n" + "=" * 60)
+    print(" " + "=" * 60)
     print("Mystem: EXTERNAL tokenizer (razdel в modal) + CONLLU формат")
     print("=" * 60)
     ext_conllu = service.parse_sentence_chunk.remote(
