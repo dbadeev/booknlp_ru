@@ -43,11 +43,27 @@ class MystemService:
         from pymystem3 import Mystem
         from razdel import tokenize
 
-        logging.basicConfig(level=logging.INFO)
+        # logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(level=logging.DEBUG)
         self.logger = logging.getLogger("MystemService")
         self.mystem = Mystem(entire_input=False, disambiguation=True)
         self._tokenize = tokenize
         self.logger.info("Mystem initialized!")
+
+    # Добавить в класс MystemService после setup():
+    def _debug_analysis(self, sent: str, analysis: list) -> None:
+        """Временная диагностика: показывает сырой вывод mystem для предложения."""
+        self.logger.debug(f"\n{'─' * 40}")
+        self.logger.debug(f"Input: {repr(sent)}")
+        self.logger.debug(f"Raw analysis ({len(analysis)} items):")
+        for i, item in enumerate(analysis):
+            text = item.get("text", "")
+            ans = item.get("analysis", [])
+            self.logger.debug(
+                f"  [{i}] text={repr(text)} "
+                f"stripped={repr(text.strip())} "
+                f"analysis_len={len(ans)}"
+            )
 
     # ========= INTERNAL: mystem сам токенизирует предложение =========
 
@@ -75,6 +91,7 @@ class MystemService:
                 continue
             try:
                 analysis = self.mystem.analyze(sent)
+                self._debug_analysis(sent, analysis)
                 if output_format == "native":
                     tokens = self._process_native(analysis)
                 else:
@@ -128,6 +145,7 @@ class MystemService:
             # 3. Анализ mystem
             try:
                 analysis = self.mystem.analyze(text_for_mystem)
+                self._debug_analysis(text_for_mystem, analysis)
 
                 base_tokens = (
                     self._process_native(analysis)
@@ -352,24 +370,39 @@ def main():
             if tok.get("misc", "_") != "_":
                 print(f"        misc: {tok['misc']}")
 
+        # ── Сравнение токенизаций: external vs internal ───────────────────────────
         print("=" * 60)
         print("СРАВНЕНИЕ ТОКЕНИЗАЦИЙ: external vs internal")
         print("=" * 60)
+
         sent_compare = ["Зло, которым ты меня пугаешь, вовсе не так зло."]
-        ext = service.parse_sentence_chunk.remote(sent_compare, output_format="conllu")
-        int_ = service.parse_sentence_chunk_native.remote(sent_compare, output_format="conllu")
+        ext = service.parse_sentence_chunk.remote(
+            sent_compare, output_format="conllu"
+        )
+        int_ = service.parse_sentence_chunk_native.remote(
+            sent_compare, output_format="conllu"
+        )
+
         for s_idx, (s_e, s_i) in enumerate(zip(ext, int_), 1):
             print(f"\n# Sentence {s_idx}")
-            print(f"  {'#':>3}  {'external':<20} {'internal':<20} {'UPOS ext':<10} {'UPOS int':<10} match")
+            print(
+                f"  {'#':>3}  {'external':<20} {'internal':<20} "
+                f"{'UPOS ext':<10} {'UPOS int':<10} match"
+            )
             print("  " + "─" * 70)
-            max_len = max(len(s_e), len(s_i))
-            for t_idx in range(max_len):
-                te = s_e[t_idx] if t_idx < len(s_e) else None
-                ti = s_i[t_idx] if t_idx < len(s_i) else None
-                fe = te["form"] if te else "—"
-                fi = ti["form"] if ti else "—"
-                ue = te["upos"] if te else "—"
-                ui = ti["upos"] if ti else "—"
-                match = "✅" if fe == fi and ue == ui else "❌"
-                print(f"  {t_idx + 1:>3}  {fe:<20} {fi:<20} {ue:<10} {ui:<10} {match}")
-
+            if len(s_e) != len(s_i):
+                print(
+                    f"  ⚠️  Разное кол-во токенов: "
+                    f"external={len(s_e)}, internal={len(s_i)}"
+                )
+                print(f"    external: {[t['form'] for t in s_e]}")
+                print(f"    internal: {[t['form'] for t in s_i]}")
+                continue
+            for t_idx, (te, ti) in enumerate(zip(s_e, s_i), 1):
+                form_match = "✅" if te["form"] == ti["form"] else "⚠️ "
+                upos_match = "✅" if te["upos"] == ti["upos"] else "❌"
+                print(
+                    f"  {t_idx:>3}  {te['form']:<20} {ti['form']:<20} "
+                    f"{te['upos']:<10} {ti['upos']:<10} "
+                    f"upos:{upos_match} form:{form_match}"
+                )

@@ -503,8 +503,9 @@ if __name__ == "__main__":
 
     # ── Сравнение токенизаций: external vs internal ───────────────────────────
     print(f"\n{sep}")
-    print("СРАВНЕНИЕ ТОКЕНИЗАЦИЙ: external vs internal (conllu, многопредложенный текст)")
+    print("СРАВНЕНИЕ ТОКЕНИЗАЦИЙ: external vs internal (conllu)")
     print(sep)
+
     res_ext = parser.parse_text(
         text_multi, output_format="conllu", tokenizer="external",
         batch_size=args.batch_size,
@@ -513,19 +514,30 @@ if __name__ == "__main__":
         text_multi, output_format="conllu", tokenizer="internal",
         batch_size=args.batch_size,
     )
-    print(f"\n  {'Предл.':<8} {'#':>3}  {'external form':<20} {'internal form':<20} {'UPOS совп.'}")
-    print("  " + "─" * 70)
+
+    print(
+        f"\n  {'Предл.':<8} {'#':>3}  "
+        f"{'external form':<20} {'internal form':<20} "
+        f"{'UPOS ext':<10} {'UPOS int':<10} match"
+    )
+    print("  " + "─" * 90)
+
     for s_idx, (s_e, s_i) in enumerate(zip(res_ext, res_int), 1):
         if len(s_e) != len(s_i):
             print(
-                f"  ⚠️  Предложение {s_idx}: разное кол-во токенов "
-                f"(external={len(s_e)}, internal={len(s_i)}) — сравнение пропущено"
+                f"\n  ⚠️  Предложение {s_idx}: разное кол-во токенов "
+                f"(external={len(s_e)}, internal={len(s_i)}) — "
+                f"токенизации различаются:"
             )
+            print(f"    external: {[t['form'] for t in s_e]}")
+            print(f"    internal: {[t['form'] for t in s_i]}")
             continue
         for t_idx, (te, ti) in enumerate(zip(s_e, s_i), 1):
             form_match = "✅" if te["form"] == ti["form"] else "⚠️ "
             upos_match = "✅" if te["upos"] == ti["upos"] else "❌"
             print(
-                f"  {s_idx:<8} {t_idx:>3}  {te['form']:<20} {ti['form']:<20} "
-                f"upos: {te['upos']:<7} vs {ti['upos']:<7} {upos_match}  form: {form_match}"
+                f"  {s_idx:<8} {t_idx:>3}  "
+                f"{te['form']:<20} {ti['form']:<20} "
+                f"{te['upos']:<10} {ti['upos']:<10} "
+                f"upos:{upos_match} form:{form_match}"
             )
