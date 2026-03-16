@@ -238,7 +238,8 @@ def main():
         output_format="native",
     )
     for i, sent in enumerate(ext_native, 1):
-        print(f"\n# Sentence {i}")
+        print(f"\n# sent_id = {i}")
+        print(f"# text = {sentences[i - 1]}")
         for tok in sent:
             print(f"  Token: {tok['text']}")
             variants = tok.get("analysis") or []
@@ -264,13 +265,17 @@ def main():
         sentences,
         output_format="conllu",
     )
-    for i, sent in enumerate(ext_conllu, 1):
-        print(f"\n# Sentence {i}")
+    print(f"\n  {'ID':<4} {'FORM':<16} {'LEMMA':<16} {'UPOS':<7} "
+          f"{'XPOS':<5} {'FEATS':<5} {'HEAD':<5} {'DEPREL':<10} {'DEPS':<5} MISC")
+    print("  " + "-" * 110)
+    for i, sent in enumerate(ext_conllu, 1):  # или int_conllu
+        print(f"\n# sent_id = {i}")
+        print(f"# text = {sentences[i - 1]}")
         for tok in sent:
             line = (
-                f"{tok['id']}\t{tok['form']}\t{tok['lemma']}\t{tok['upos']}\t"
-                f"{tok['xpos']}\t{tok['feats']}\t"
-                f"{tok['head']}\t{tok['deprel']}\t{tok['deps']}\t{tok['misc']}"
+                f"{tok['id']:<4}\t{tok['form']:<16}\t{tok['lemma']:<16}\t{tok['upos']:<7}\t"
+                f"{tok['xpos']:<5}\t{tok['feats']:<5}\t"
+                f"{tok['head']:<5}\t{tok['deprel']:<10}\t{tok['deps']:<5}\t{tok['misc']}"
             )
             print("  " + line)
 
@@ -283,7 +288,8 @@ def main():
         output_format="native",
     )
     for i, sent in enumerate(int_native, 1):
-        print(f"\n# Sentence {i}")
+        print(f"\n# sent_id = {i}")
+        print(f"# text = {sentences[i - 1]}")
         for tok in sent:
             print(f"  Token: {tok['text']}")
             variants = tok.get("analysis") or []
@@ -309,12 +315,17 @@ def main():
         sentences,
         output_format="conllu",
     )
+    print(f"\n  {'ID':<4} {'FORM':<16} {'LEMMA':<16} {'UPOS':<7} "
+          f"{'XPOS':<5} {'FEATS':<5} {'HEAD':<5} {'DEPREL':<10} {'DEPS':<5} MISC")
+    print("  " + "-" * 110)
     for i, sent in enumerate(int_conllu, 1):
-        print(f"\n# Sentence {i}")
+        print(f"\n# sent_id = {i}")
+        print(f"# text = {sentences[i - 1]}")
         for tok in sent:
             line = (
-                f"{tok['id']}\t{tok['form']}\t{tok['lemma']}\t{tok['upos']}\t"
-                f"{tok['xpos']}\t{tok['feats']}\t"
-                f"{tok['head']}\t{tok['deprel']}\t{tok['deps']}\t{tok['misc']}"
+                f"{tok['id']:<4}\t{tok['form']:<16}\t{tok['lemma']:<16}\t{tok['upos']:<7}\t"
+                f"{tok['xpos']:<5}\t{tok['feats']:<5}\t"
+                f"{tok['head']:<5}\t{tok['deprel']:<10}\t{tok['deps']:<5}\t{tok['misc']}"
             )
             print("  " + line)
+
