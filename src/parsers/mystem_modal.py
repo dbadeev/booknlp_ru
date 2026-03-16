@@ -63,6 +63,9 @@ class MystemService:
         Для каждого предложения вызываем mystem отдельно.
         Выход: список предложений; каждое предложение — список токенов.
         """
+        if output_format not in {"native", "conllu"}:
+            raise ValueError(f"Unknown output_format: {output_format!r}. Use 'native' or 'conllu'.")
+
         results: List[List[Dict[str, Any]]] = []
 
         for sent in sentences:
@@ -70,15 +73,17 @@ class MystemService:
             if not sent:
                 results.append([])
                 continue
-
-            analysis = self.mystem.analyze(sent)
-
-            if output_format == "native":
-                tokens = self._process_native(analysis)
-            else:
-                tokens = self._process_simplified(analysis)
-
-            results.append(tokens)
+            try:
+                analysis = self.mystem.analyze(sent)
+                if output_format == "native":
+                    tokens = self._process_native(analysis)
+                else:
+                    tokens = self._process_simplified(analysis)
+                results.append(tokens)
+            except Exception as e:
+                self.logger.error(f"mystem.analyze error (sent='{sent[:40]}'): {e}")
+                results.append([])
+                continue
 
         return results
 
@@ -100,6 +105,9 @@ class MystemService:
           - получение морфоразбора для последовательности токенов.
         Выход: список предложений; каждое предложение — список токенов mystem.
         """
+        if output_format not in {"native", "conllu"}:
+            raise ValueError(f"Unknown output_format: {output_format!r}. Use 'native' or 'conllu'.")
+
         results: List[List[Dict[str, Any]]] = []
 
         for sent in sentences:
@@ -118,17 +126,22 @@ class MystemService:
             text_for_mystem = " ".join(tokens_text)
 
             # 3. Анализ mystem
-            analysis = self.mystem.analyze(text_for_mystem)
+            try:
+                analysis = self.mystem.analyze(text_for_mystem)
 
-            base_tokens = (
-                self._process_native(analysis)
-                if output_format == "native"
-                else self._process_simplified(analysis)
-            )
+                base_tokens = (
+                    self._process_native(analysis)
+                    if output_format == "native"
+                    else self._process_simplified(analysis)
+                )
 
-            # ВАЖНО: не требуем равенства количества токенов.
-            # Принимаем токенизацию mystem как есть, в порядке следования.
-            results.append(base_tokens)
+                # ВАЖНО: не требуем равенства количества токенов.
+                # Принимаем токенизацию mystem как есть, в порядке следования.
+                results.append(base_tokens)
+            except Exception as e:
+                self.logger.error(f"mystem.analyze error (sent='{sent[:40]}'): {e}")
+                results.append([])
+                continue
 
         return results
 
@@ -198,7 +211,7 @@ class MystemService:
                 misc_parts.append(f"Analyses={len(analyses)}")
                 misc_parts.append("Best=0")
 
-            if token_text in PUNCT_CHARS:
+            if all(ch in PUNCT_CHARS for ch in token_text) and not analyses:
                 upos = "PUNCT"
 
             misc = "|".join(misc_parts) if misc_parts else "_"
@@ -238,7 +251,7 @@ def main():
         output_format="native",
     )
     for i, sent in enumerate(ext_native, 1):
-        print(f"\n# sent_id = {i}")
+        # print(f"\n# sent_id = {i}")
         print(f"# text = {sentences[i - 1]}")
         for tok in sent:
             print(f"  Token: {tok['text']}")
@@ -265,19 +278,25 @@ def main():
         sentences,
         output_format="conllu",
     )
-    print(f"\n  {'ID':<4} {'FORM':<16} {'LEMMA':<16} {'UPOS':<7} "
-          f"{'XPOS':<5} {'FEATS':<5} {'HEAD':<5} {'DEPREL':<10} {'DEPS':<5} MISC")
+    # print(f"\n  {'ID':<4} {'FORM':<16} {'LEMMA':<16} {'UPOS':<7} "
+    #       f"{'XPOS':<5} {'FEATS':<5} {'HEAD':<5} {'DEPREL':<10} {'DEPS':<5} MISC")
     print("  " + "-" * 110)
     for i, sent in enumerate(ext_conllu, 1):  # или int_conllu
-        print(f"\n# sent_id = {i}")
+        # print(f"\n# sent_id = {i}")
         print(f"# text = {sentences[i - 1]}")
+        print(
+            f"\n  {'ID':<4} {'FORM':<16} {'LEMMA':<16} {'UPOS':<7} "
+            f"{'XPOS':<5} {'FEATS':<5} {'HEAD':<5} {'DEPREL':<10} {'DEPS':<5}"
+        )
+        print("  " + "-" * 90)
         for tok in sent:
-            line = (
-                f"{tok['id']:<4}\t{tok['form']:<16}\t{tok['lemma']:<16}\t{tok['upos']:<7}\t"
-                f"{tok['xpos']:<5}\t{tok['feats']:<5}\t"
-                f"{tok['head']:<5}\t{tok['deprel']:<10}\t{tok['deps']:<5}\t{tok['misc']}"
+            print(
+                f"  {tok['id']:<4} {tok['form']:<16} {tok['lemma']:<16} {tok['upos']:<7}"
+                f" {tok['xpos']:<5} {tok['feats']:<5}"
+                f" {tok['head']:<5} {tok['deprel']:<10} {tok['deps']:<5}"
             )
-            print("  " + line)
+            if tok.get("misc", "_") != "_":
+                print(f"        misc: {tok['misc']}")
 
     # ========== 3. INTERNAL + NATIVE ==========
     print("\n" + "=" * 60)
@@ -288,7 +307,7 @@ def main():
         output_format="native",
     )
     for i, sent in enumerate(int_native, 1):
-        print(f"\n# sent_id = {i}")
+        # print(f"\n# sent_id = {i}")
         print(f"# text = {sentences[i - 1]}")
         for tok in sent:
             print(f"  Token: {tok['text']}")
@@ -315,17 +334,23 @@ def main():
         sentences,
         output_format="conllu",
     )
-    print(f"\n  {'ID':<4} {'FORM':<16} {'LEMMA':<16} {'UPOS':<7} "
-          f"{'XPOS':<5} {'FEATS':<5} {'HEAD':<5} {'DEPREL':<10} {'DEPS':<5} MISC")
+    # print(f"\n  {'ID':<4} {'FORM':<16} {'LEMMA':<16} {'UPOS':<7} "
+    #       f"{'XPOS':<5} {'FEATS':<5} {'HEAD':<5} {'DEPREL':<10} {'DEPS':<5} MISC")
     print("  " + "-" * 110)
-    for i, sent in enumerate(int_conllu, 1):
-        print(f"\n# sent_id = {i}")
+    for i, sent in enumerate(ext_conllu, 1):  # или int_conllu
+        # print(f"\n# sent_id = {i}")
         print(f"# text = {sentences[i - 1]}")
+        print(
+            f"\n  {'ID':<4} {'FORM':<16} {'LEMMA':<16} {'UPOS':<7} "
+            f"{'XPOS':<5} {'FEATS':<5} {'HEAD':<5} {'DEPREL':<10} {'DEPS':<5}"
+        )
+        print("  " + "-" * 90)
         for tok in sent:
-            line = (
-                f"{tok['id']:<4}\t{tok['form']:<16}\t{tok['lemma']:<16}\t{tok['upos']:<7}\t"
-                f"{tok['xpos']:<5}\t{tok['feats']:<5}\t"
-                f"{tok['head']:<5}\t{tok['deprel']:<10}\t{tok['deps']:<5}\t{tok['misc']}"
+            print(
+                f"  {tok['id']:<4} {tok['form']:<16} {tok['lemma']:<16} {tok['upos']:<7}"
+                f" {tok['xpos']:<5} {tok['feats']:<5}"
+                f" {tok['head']:<5} {tok['deprel']:<10} {tok['deps']:<5}"
             )
-            print("  " + line)
+            if tok.get("misc", "_") != "_":
+                print(f"        misc: {tok['misc']}")
 
