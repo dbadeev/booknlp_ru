@@ -123,7 +123,7 @@ class MystemService:
                 continue
 
             # 2. Собираем строку, где каждый токен отделён пробелом
-            text_for_mystem = " ".join(tokens_text)
+            text_for_mystem = "\n".join(tokens_text)
 
             # 3. Анализ mystem
             try:
@@ -157,10 +157,9 @@ class MystemService:
             token_text = item.get("text", "")
             if not token_text:
                 continue
-            token_clean = token_text.strip()
-            if not token_clean and token_text:
+            token_text = token_text.strip()
+            if not token_text:
                 continue
-            token_text = token_clean
 
             native_token = {
                 "id": len(tokens) + 1,
@@ -184,10 +183,9 @@ class MystemService:
             token_text = item.get("text", "")
             if not token_text:
                 continue
-            token_clean = token_text.strip()
-            if not token_clean and token_text:
+            token_text = token_text.strip()
+            if not token_text:
                 continue
-            token_text = token_clean
 
             lemma = token_text.lower()
             upos = "X"
@@ -353,4 +351,25 @@ def main():
             )
             if tok.get("misc", "_") != "_":
                 print(f"        misc: {tok['misc']}")
+
+        print("=" * 60)
+        print("СРАВНЕНИЕ ТОКЕНИЗАЦИЙ: external vs internal")
+        print("=" * 60)
+        sent_compare = ["Зло, которым ты меня пугаешь, вовсе не так зло."]
+        ext = service.parse_sentence_chunk.remote(sent_compare, output_format="conllu")
+        int_ = service.parse_sentence_chunk_native.remote(sent_compare, output_format="conllu")
+        for s_idx, (s_e, s_i) in enumerate(zip(ext, int_), 1):
+            print(f"\n# Sentence {s_idx}")
+            print(f"  {'#':>3}  {'external':<20} {'internal':<20} {'UPOS ext':<10} {'UPOS int':<10} match")
+            print("  " + "─" * 70)
+            max_len = max(len(s_e), len(s_i))
+            for t_idx in range(max_len):
+                te = s_e[t_idx] if t_idx < len(s_e) else None
+                ti = s_i[t_idx] if t_idx < len(s_i) else None
+                fe = te["form"] if te else "—"
+                fi = ti["form"] if ti else "—"
+                ue = te["upos"] if te else "—"
+                ui = ti["upos"] if ti else "—"
+                match = "✅" if fe == fi and ue == ui else "❌"
+                print(f"  {t_idx + 1:>3}  {fe:<20} {fi:<20} {ue:<10} {ui:<10} {match}")
 
