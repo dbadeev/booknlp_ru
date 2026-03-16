@@ -1,262 +1,320 @@
-import modal
 import logging
 import re
+from typing import List, Dict, Any, Literal
 
-# Образ: Python + pymystem3
+import modal
+
+# Образ с mystem и razdel
 image = (
     modal.Image.debian_slim()
-    .pip_install("pymystem3")
-    # Предзагрузка бинарника Mystem
+    .pip_install("pymystem3", "razdel")
     .run_commands("python -c 'from pymystem3 import Mystem; Mystem()'")
 )
 
 app = modal.App("booknlp-ru-mystem")
 
-# Маппинг Mystem POS -> Universal Dependencies UPOS
+# Маппинг POS mystem -> UD POS
 MYSTEM_TO_UPOS = {
-    'S': 'NOUN', 'A': 'ADJ', 'V': 'VERB', 'ADV': 'ADV',
-    'SPRO': 'PRON', 'PR': 'ADP', 'CONJ': 'CCONJ',
-    'PART': 'PART', 'INTJ': 'INTJ', 'NUM': 'NUM',
-    'COM': 'X', 'APRO': 'DET', 'ANUM': 'ADJ', 'ADVPRO': 'ADV'
+    "S": "NOUN",
+    "A": "ADJ",
+    "V": "VERB",
+    "ADV": "ADV",
+    "SPRO": "PRON",
+    "PR": "ADP",
+    "CONJ": "CCONJ",
+    "PART": "PART",
+    "INTJ": "INTJ",
+    "NUM": "NUM",
+    "COM": "X",
+    "APRO": "DET",
+    "ANUM": "ADJ",
+    "ADVPRO": "ADV",
 }
+
+PUNCT_CHARS = ".!?,;:—–-\"«»()[]{}"
+
+OutputFormat = Literal["native", "conllu"]
 
 
 @app.cls(image=image, timeout=600)
 class MystemService:
-
     @modal.enter()
     def setup(self):
         from pymystem3 import Mystem
+        from razdel import tokenize
+
         logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger("MystemService")
-        # entire_input=False убирает лишние пробелы из вывода
-        # С disambiguation=False возвращает все варианты БЕЗ учета контекста, отсортированные по частотности в корпусе
-        # С disambiguation=True возвращает все варианты С учетом контекста
         self.mystem = Mystem(entire_input=False, disambiguation=True)
+        self._tokenize = tokenize
         self.logger.info("Mystem initialized!")
 
+    # ========= INTERNAL: mystem сам токенизирует предложение =========
+
     @modal.method()
-    def parse_batch(self, batch_texts: list, output_format: str = "simplified"):
+    def parse_sentence_chunk_native(
+        self,
+        sentences: List[str],
+        output_format: OutputFormat = "native",
+    ) -> List[List[Dict[str, Any]]]:
         """
-        batch_texts: Список предложений (list[str] или list[list[str]]).
-        output_format: Формат выхода - "simplified" (текущий) или "native" (нативный формат Mystem).
-        Возвращает список документов: List[List[List[Dict]]].
+        INTERNAL режим.
+        Вход: список предложений (строки), уже razdel.sentenize во wrapper.
+        Для каждого предложения вызываем mystem отдельно.
+        Выход: список предложений; каждое предложение — список токенов.
         """
-        results = []
+        results: List[List[Dict[str, Any]]] = []
 
-        for text_obj in batch_texts:
-            try:
-                # Нормализация входа
-                if isinstance(text_obj, list):
-                    text = " ".join([str(t) for t in text_obj])
-                elif isinstance(text_obj, str):
-                    text = text_obj
-                else:
-                    text = str(text_obj) if text_obj else ""
+        for sent in sentences:
+            sent = (sent or "").strip()
+            if not sent:
+                results.append([])
+                continue
 
-                if not isinstance(text, str):
-                    self.logger.error(f"Text is not string: {type(text)}")
-                    results.append([[]])
-                    continue
+            analysis = self.mystem.analyze(sent)
 
-                if not text.strip():
-                    results.append([[]])
-                    continue
+            if output_format == "native":
+                tokens = self._process_native(analysis)
+            else:
+                tokens = self._process_simplified(analysis)
 
-                # Mystem анализ
-                analysis = self.mystem.analyze(text)
-
-                # ============================================================
-                # БЛОК: Выбор формата выхода в зависимости от параметра
-                # ============================================================
-                if output_format == "native":
-                    # Нативный формат: возвращаем полную структуру JSON от Mystem
-                    sent_res = self._process_native(analysis)
-                else:
-                    # Упрощенный формат (текущая логика): возвращаем токены с базовыми полями
-                    sent_res = self._process_simplified(analysis)
-
-                # Возвращаем [sent_res] - список предложений
-                results.append([sent_res] if sent_res else [[]])
-
-            except Exception as e:
-                self.logger.error(f"Mystem error: {e}")
-                import traceback
-                self.logger.error(traceback.format_exc())
-                results.append([[]])
+            results.append(tokens)
 
         return results
 
-    # ============================================================
-    # БЛОК: Подготовка нативного выхода модели Mystem
-    # ============================================================
-    def _process_native(self, analysis: list) -> list:
+    # ========= EXTERNAL: токены фиксирует razdel в modal =========
+
+    @modal.method()
+    def parse_sentence_chunk(
+        self,
+        sentences: List[str],
+        output_format: OutputFormat = "native",
+    ) -> List[List[Dict[str, Any]]]:
         """
-    Подготавливает нативный выход модели Mystem.
-
-    Возвращает полную структуру JSON, которую отдает Mystem:
-    - text: исходный токен
-    - analysis: список омонимов (гипотез разбора)
-      - lex: лемма
-      - gr: полная грамматическая строка (например, "S,жен,неод=вин,ед")
-      - wt: вес (вероятность) гипотезы
-      - qual: маркер качества (ОПЦИОНАЛЬНОЕ поле, появляется ТОЛЬКО для несловарных слов)
-              Возможные значения: "bastard" (неизвестное слово), "sob", "prefixoid"
-              Для обычных словарных слов поле отсутствует
-
-        Аргументы:
-            analysis (list): Нативный вывод от mystem.analyze()
-
-        Возвращает:
-            list: Список токенов с полной нативной структурой
+        EXTERNAL режим.
+        Вход: список предложений (строки) от wrapper (razdel.sentenize).
+        Для каждого предложения:
+          - токенизация razdel.tokenize в modal,
+          - сбор строки из токенов,
+          - вызов mystem.analyze,
+          - получение морфоразбора для последовательности токенов.
+        Выход: список предложений; каждое предложение — список токенов mystem.
         """
-        sent_res = []
+        results: List[List[Dict[str, Any]]] = []
 
-        for i, item in enumerate(analysis):
-            token_text = item.get('text', '')
+        for sent in sentences:
+            sent = (sent or "").strip()
+            if not sent:
+                results.append([])
+                continue
 
-            # Пропускаем пустые токены и чистые пробелы
+            # 1. razdel-токенизация предложения
+            tokens_text = [t.text for t in self._tokenize(sent)]
+            if not tokens_text:
+                results.append([])
+                continue
+
+            # 2. Собираем строку, где каждый токен отделён пробелом
+            text_for_mystem = " ".join(tokens_text)
+
+            # 3. Анализ mystem
+            analysis = self.mystem.analyze(text_for_mystem)
+
+            base_tokens = (
+                self._process_native(analysis)
+                if output_format == "native"
+                else self._process_simplified(analysis)
+            )
+
+            # ВАЖНО: не требуем равенства количества токенов.
+            # Принимаем токенизацию mystem как есть, в порядке следования.
+            results.append(base_tokens)
+
+        return results
+
+    # ========= УТИЛИТЫ ДЛЯ ОБРАБОТКИ РЕЗУЛЬТАТА MYSTEM =========
+
+    def _process_native(self, analysis: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Полный нативный формат: один список токенов для одного предложения.
+        analysis — результат mystem.analyze(строка).
+        """
+        tokens: List[Dict[str, Any]] = []
+        for item in analysis:
+            token_text = item.get("text", "")
             if not token_text:
                 continue
-
             token_clean = token_text.strip()
             if not token_clean and token_text:
-                # Это пробел или whitespace - пропускаем
                 continue
-
-            # Используем очищенную версию
             token_text = token_clean
 
-            # ============================================================
-            # Сохраняем полную нативную структуру Mystem
-            # ============================================================
             native_token = {
-                "id": len(sent_res) + 1,  # ID добавляем для удобства (не является нативным полем)
-                "text": token_text,  # Исходный токен
-                "analysis": item.get('analysis', [])  # Список всех гипотез разбора (омонимов)
+                "id": len(tokens) + 1,
+                "text": token_text,
+                # analysis: полный список вариантов, как отдаёт mystem
+                "analysis": item.get("analysis", []),
             }
+            tokens.append(native_token)
+        return tokens
 
-            sent_res.append(native_token)
-
-        return sent_res
-
-    # ============================================================
-    # БЛОК: Упрощенный формат (текущая логика без изменений)
-    # ============================================================
-    def _process_simplified(self, analysis: list) -> list:
+    def _process_simplified(self, analysis: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Подготавливает упрощенный выход (текущий формат).
-
-        Возвращает токены с базовыми полями: id, form, lemma, upos.
-        Берется только первая гипотеза из analysis.
-
-        Аргументы:
-            analysis (list): Нативный вывод от mystem.analyze()
-
-        Возвращает:
-            list: Список токенов с упрощенными полями
+        Упрощённый формат для дальнейшего преобразования в CoNLL-U.
+        Здесь сразу формируем 10 полей CoNLL-U, но интерпретируемыми
+        реально являются только ID, FORM, LEMMA, UPOS.
+        Остальное заполняется заглушками, а сырые поля mystem
+        складываются в MISC.
         """
-        sent_res = []
-
-        # ===== ИСПРАВЛЕНО: ОБРАБОТКА ПУНКТУАЦИИ =====
-        for i, item in enumerate(analysis):
-            token_text = item.get('text', '')
-
-            # НОВОЕ: НЕ пропускаем пустые строки сразу
-            # Проверяем, что это не просто пробел
+        tokens: List[Dict[str, Any]] = []
+        for item in analysis:
+            token_text = item.get("text", "")
             if not token_text:
                 continue
-
-            # ИСПРАВЛЕНО: strip() может удалить значимую пунктуацию
-            # Сохраняем оригинальный текст, если он не пустой после strip
             token_clean = token_text.strip()
             if not token_clean and token_text:
-                # Это пробел или whitespace - пропускаем
                 continue
-
-            # Используем очищенную версию
             token_text = token_clean
-            # ===== КОНЕЦ ИСПРАВЛЕНИЯ =====
 
             lemma = token_text.lower()
             upos = "X"
+            misc_parts = []
 
-            # Морфологический анализ
-            if 'analysis' in item and item['analysis']:
-                lex_entry = item['analysis'][0]
-                lemma = lex_entry.get('lex', token_text.lower())
-                gr_full = lex_entry.get('gr', '')
+            analyses = item.get("analysis") or []
+            if analyses:
+                best = analyses[0]
+                lemma = best.get("lex", token_text.lower())
+                gr_full = best.get("gr", "")
+                gr_pos = re.split(r"[\[,=]", gr_full)[0]
+                upos = MYSTEM_TO_UPOS.get(gr_pos, "X")
 
-                # Извлекаем POS из грамматики
-                gr_pos = re.split('[,=]', gr_full)[0]
-                upos = MYSTEM_TO_UPOS.get(gr_pos, 'X')
+                # Всё, что не пошло в LEMMA/UPOS, кодируем в MISC:
+                if gr_full:
+                    misc_parts.append(f"Gr={gr_full}")
+                if "wt" in best:
+                    misc_parts.append(f"Wt={best['wt']}")
+                if "qual" in best:
+                    misc_parts.append(f"Qual={best['qual']}")
+                misc_parts.append(f"Analyses={len(analyses)}")
+                misc_parts.append("Best=0")
 
-            # НОВОЕ: Специальная обработка пунктуации
-            if token_text in '.!?,;:—–-"«»()[]{}':
-                upos = 'PUNCT'
+            if token_text in PUNCT_CHARS:
+                upos = "PUNCT"
 
-            sent_res.append({
-                "id": len(sent_res) + 1,  # ИСПРАВЛЕНО: нумерация с 1
-                "form": token_text,
-                "lemma": lemma,
-                "upos": upos
-            })
+            misc = "|".join(misc_parts) if misc_parts else "_"
 
-        return sent_res
+            tokens.append(
+                {
+                    "id": len(tokens) + 1,   # ID
+                    "form": token_text,      # FORM
+                    "lemma": lemma,          # LEMMA
+                    "upos": upos,            # UPOS
+                    "xpos": "_",             # XPOS (пока не используем)
+                    "feats": "_",            # FEATS
+                    "head": "_",             # HEAD
+                    "deprel": "_",           # DEPREL
+                    "deps": "_",             # DEPS
+                    "misc": misc,            # MISC (сырые поля mystem)
+                }
+            )
+        return tokens
 
 
 @app.local_entrypoint()
 def main():
-    test_texts = [
-        "Это тестовое предложение.",
-        ["Список", "токенов", "для", "теста"],
-        "Мама мыла раму."
-    ]
-
-    print("🚀 Testing Mystem service...")
     service = MystemService()
 
-    # ============================================================
-    # Демонстрация работы в упрощенном формате (по умолчанию)
-    # ============================================================
-    print("\n" + "=" * 60)
-    print("УПРОЩЕННЫЙ ФОРМАТ (simplified):")
+    sentences = [
+        "Это тестовое предложение.",
+        "Мама мыла раму.",
+    ]
+
+    # ========== 1. EXTERNAL + NATIVE ==========
     print("=" * 60)
-    results = service.parse_batch.remote(test_texts, output_format="simplified")
-
-    for i, doc in enumerate(results):
-        print(f"\n📄 Document {i + 1}: {test_texts[i]}")
-        if not doc or not doc[0]:
-            print("  [Empty result]")
-            continue
-
-        sent = doc[0]
-        print(f"  Tokens: {len(sent)}")
+    print("Mystem: EXTERNAL tokenizer (razdel в modal) + NATIVE формат")
+    print("=" * 60)
+    ext_native = service.parse_sentence_chunk.remote(
+        sentences,
+        output_format="native",
+    )
+    for i, sent in enumerate(ext_native, 1):
+        print(f"\n# Sentence {i}")
         for tok in sent:
-            print(f"  {tok['id']}\t{tok['form']} -> {tok['lemma']} ({tok.get('upos', 'X')})")
-
-    # ============================================================
-    # Демонстрация работы в нативном формате
-    # ============================================================
-    print("\n" + "=" * 60)
-    print("НАТИВНЫЙ ФОРМАТ (native):")
-    print("=" * 60)
-    results_native = service.parse_batch.remote(test_texts[:1], output_format="native")
-
-    for i, doc in enumerate(results_native):
-        print(f"\n📄 Document {i + 1}: {test_texts[i]}")
-        if not doc or not doc[0]:
-            print("  [Empty result]")
-            continue
-
-        sent = doc[0]
-        print(f"  Tokens: {len(sent)}")
-        for tok in sent[:3]:  # Показываем первые 3 токена
             print(f"  Token: {tok['text']}")
-            print(f"    Analysis variants: {len(tok['analysis'])}")
-            for j, variant in enumerate(tok['analysis'][:2]):  # Первые 2 гипотезы
-                print(f"      [{j+1}] lex={variant.get('lex')}, gr={variant.get('gr')}, wt={variant.get('wt')}")
+            variants = tok.get("analysis") or []
+            print(f"    Analysis variants: {len(variants)}")
+            for j, var in enumerate(variants, 1):
+                lex = var.get("lex", "")
+                gr = var.get("gr", "")
+                wt = var.get("wt", "")
+                qual = var.get("qual", "")
+                extra = []
+                if wt != "":
+                    extra.append(f"wt={wt}")
+                if qual != "":
+                    extra.append(f"qual={qual}")
+                extra_str = ", ".join(extra) if extra else ""
+                print(f"      [{j}] lex={lex}, gr={gr}{(', ' + extra_str) if extra_str else ''}")
 
-    print("\n✅ Test completed!")
+    # ========== 2. EXTERNAL + CONLLU ==========
+    print("\n" + "=" * 60)
+    print("Mystem: EXTERNAL tokenizer (razdel в modal) + CONLLU формат")
+    print("=" * 60)
+    ext_conllu = service.parse_sentence_chunk.remote(
+        sentences,
+        output_format="conllu",
+    )
+    for i, sent in enumerate(ext_conllu, 1):
+        print(f"\n# Sentence {i}")
+        for tok in sent:
+            line = (
+                f"{tok['id']}\t{tok['form']}\t{tok['lemma']}\t{tok['upos']}\t"
+                f"{tok['xpos']}\t{tok['feats']}\t"
+                f"{tok['head']}\t{tok['deprel']}\t{tok['deps']}\t{tok['misc']}"
+            )
+            print("  " + line)
 
+    # ========== 3. INTERNAL + NATIVE ==========
+    print("\n" + "=" * 60)
+    print("Mystem: INTERNAL tokenizer (mystem) + NATIVE формат")
+    print("=" * 60)
+    int_native = service.parse_sentence_chunk_native.remote(
+        sentences,
+        output_format="native",
+    )
+    for i, sent in enumerate(int_native, 1):
+        print(f"\n# Sentence {i}")
+        for tok in sent:
+            print(f"  Token: {tok['text']}")
+            variants = tok.get("analysis") or []
+            print(f"    Analysis variants: {len(variants)}")
+            for j, var in enumerate(variants, 1):
+                lex = var.get("lex", "")
+                gr = var.get("gr", "")
+                wt = var.get("wt", "")
+                qual = var.get("qual", "")
+                extra = []
+                if wt != "":
+                    extra.append(f"wt={wt}")
+                if qual != "":
+                    extra.append(f"qual={qual}")
+                extra_str = ", ".join(extra) if extra else ""
+                print(f"      [{j}] lex={lex}, gr={gr}{(', ' + extra_str) if extra_str else ''}")
 
+    # ========== 4. INTERNAL + CONLLU ==========
+    print("\n" + "=" * 60)
+    print("Mystem: INTERNAL tokenizer (mystem) + CONLLU формат")
+    print("=" * 60)
+    int_conllu = service.parse_sentence_chunk_native.remote(
+        sentences,
+        output_format="conllu",
+    )
+    for i, sent in enumerate(int_conllu, 1):
+        print(f"\n# Sentence {i}")
+        for tok in sent:
+            line = (
+                f"{tok['id']}\t{tok['form']}\t{tok['lemma']}\t{tok['upos']}\t"
+                f"{tok['xpos']}\t{tok['feats']}\t"
+                f"{tok['head']}\t{tok['deprel']}\t{tok['deps']}\t{tok['misc']}"
+            )
+            print("  " + line)
