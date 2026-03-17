@@ -210,17 +210,15 @@ class MystemParser:
 
             if tokenizer == "external":
                 if len(chunks) == 1:
-                    return self.service.parse_sentence_chunk.remote(
-                        chunks[0], output_format=output_format
-                    )
+                    raw = self.service.parse_sentence_chunk.remote(chunks[0], output_format=output_format)
+                    return self._merge_chunks([raw])
                 chunk_results = list(self.service.parse_sentence_chunk.map(
                     chunks, kwargs={"output_format": output_format}
                 ))
             else:  # internal
                 if len(chunks) == 1:
-                    return self.service.parse_sentence_chunk_native.remote(
-                        chunks[0], output_format=output_format
-                    )
+                    raw = self.service.parse_sentence_chunk_native.remote(chunks[0], output_format=output_format)
+                    return self._merge_chunks([raw])
                 chunk_results = list(self.service.parse_sentence_chunk_native.map(
                     chunks, kwargs={"output_format": output_format}
                 ))
@@ -338,57 +336,55 @@ class MystemParser:
             raise
 
 # ─── Вспомогательные функции вывода ──────────────────────────────────────────
-
-def _print_conllu(result: List[List[Any]], title: str = "") -> None:
-    """Выводит результат в conllu-формате по образцу trankit_wrapper."""
-    if title:
-        print(f"\n{title}")
-    for sent_idx, sent in enumerate(result, 1):
-        if not sent:
-            continue
-        print(f"\n# text = {' '.join(t['form'] for t in sent)}")
-        print(
-            f"  {'ID':<4} {'FORM':<16} {'LEMMA':<16} {'UPOS':<7} "
-            f"{'XPOS':<5} {'HEAD':<5} {'DEPREL':<10} {'DEPS':<5}"
+def _print_conllu(input_texts: list, results: list) -> None:
+    """
+    Выводит результат в conllu-формате по образцу trankit_wrapper.
+    """
+    for i, sent_tokens in enumerate(results, 1):
+        print(f"\n  text: {input_texts[i - 1]!r}")
+        header = (
+            f"    {'ID':>4}  {'FORM':<16} {'LEMMA':<16} {'UPOS':<7} "
+            f"{'XPOS':<6} {'FEATS':<5} {'HEAD':<5} {'DEPREL':<10} {'DEPS':<5}"
         )
-        print("  " + "─" * 90)
-        for t in sent:
+        print(header)
+        print("  " + "-" * 75)
+        for tok in sent_tokens:
+            misc = tok.get("misc", "_")
             print(
-                f"  {t['id']:<4} {t['form']:<16} {t['lemma']:<16} "
-                f"{t['upos']:<7} {t.get('xpos', '_'):<5} "
-                f"{t.get('head', '_'):<5} {t.get('deprel', '_'):<10} "
-                f"{t.get('deps', '_'):<5}"
+                f"    {tok['id']:>4}  {tok['form']:<16} {tok['lemma']:<16} "
+                f"{tok['upos']:<7} {tok.get('xpos', '_'):<6} "
+                f"{tok.get('feats', '_'):<5} {str(tok.get('head', '_')):<5} "
+                f"{tok.get('deprel', '_'):<10} {tok.get('deps', '_'):<5}"
             )
-            if t.get("misc", "_") != "_":
-                print(f"    misc: {t['misc']}")
+            if misc != "_":
+                print(f"         misc: {misc}")
 
-def _print_native(result: List[List[Any]], title: str = "") -> None:
+def _print_native(input_texts: list, results: list) -> None:
     """Выводит результат в native-формате (все поля Mystem)."""
-    if title:
-        print(f"\n{title}")
-    for sent_idx, sent in enumerate(result, 1):
-        if not sent:
-            continue
-        print(f"\n# text = {' '.join(t['text'] for t in sent)}")
-        for t in sent:
-            print(f"  Token: {t['text']}")
-            variants = t.get("analysis") or []
-            print(f"    Analysis variants: {len(variants)}")
-            for j, var in enumerate(variants, 1):
-                lex = var.get("lex", "")
-                gr = var.get("gr", "")
-                wt = var.get("wt", "")
-                qual = var.get("qual", "")
-                extra = []
-                if wt != "":
-                    extra.append(f"wt={wt}")
-                if qual != "":
-                    extra.append(f"qual={qual}")
-                extra_str = (", " + ", ".join(extra)) if extra else ""
-                print(f"      [{j}] lex={lex}, gr={gr}{extra_str}")
+    for i, sent_tokens in enumerate(results, 1):
+        print(f"\n  text (sent to mystem): {input_texts[i - 1]!r}")
+        for tok in sent_tokens:
+            variants = tok.get("analysis") or []
+            is_punct = tok.get("is_punct", False)
+            if is_punct:
+                print(f"    [{tok['id']:>2}] {tok['text']!r:12}  PUNCT  (no analysis)")
+            else:
+                print(f"    [{tok['id']:>2}] {tok['text']!r:12}  upos={tok['upos']}")
+                for j, var in enumerate(variants, 1):
+                    lex  = var.get("lex", "")
+                    gr   = var.get("gr", "")
+                    wt   = var.get("wt", "")
+                    qual = var.get("qual", "")
+                    extra = []
+                    if wt   != "": extra.append(f"wt={wt}")
+                    if qual != "": extra.append(f"qual={qual}")
+                    extra_str = ", ".join(extra)
+                    print(f"           {j}: lex={lex!r}  gr={gr!r}"
+                          + (f"  [{extra_str}]" if extra_str else ""))
+
 
 # ─── __main__: тест через wrapper (с chunking) ───────────────────────────────
-
+# ─── __main__: тест через wrapper (с chunking) ────────────────────────────────
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
@@ -397,22 +393,30 @@ if __name__ == "__main__":
 
     ap = argparse.ArgumentParser(description="MystemParser wrapper тест")
     ap.add_argument(
-        "--tokenizer", choices=["external", "internal"], default="external",
-        help="Путь токенизации (default: external)"
+        "--tokenizer",
+        choices=["external", "internal"],
+        default="external",
+        help="Путь токенизации (default: external)",
     )
     ap.add_argument(
-        "--output-format", choices=["conllu", "native"], default="conllu",
-        dest="output_format", help="Формат вывода (default: conllu)"
+        "--output-format",
+        choices=["conllu", "native"],
+        default="conllu",
+        dest="output_format",
+        help="Формат вывода (default: conllu)",
     )
     ap.add_argument(
-        "--batch-size", type=int, default=default_batch_size, dest="batch_size",
-        help=f"Предложений на чанк (default: {default_batch_size})"
+        "--batch-size",
+        type=int,
+        default=default_batch_size,
+        dest="batch_size",
+        help=f"Предложений на чанк (default: {default_batch_size})",
     )
     args = ap.parse_args()
 
-    sep = "=" * 72
+    sep = "=" * 70
 
-    # ── Проверка доступности Modal ────────────────────────────────────────────
+    # ── Проверка доступности Modal ───────────────────────────────────────────
     print(sep)
     print("ПРОВЕРКА ДОСТУПНОСТИ MODAL-СЕРВИСА")
     print(sep)
@@ -424,120 +428,148 @@ if __name__ == "__main__":
         print("  modal deploy src/parsers/mystem_modal.py")
         sys.exit(1)
 
-    text_single = "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
-    text_multi = (
-        "Зло, которым ты меня пугаешь, вовсе не так зло."
-        "Москва — столица России. "
-        "Кружка-термос стоит 500р."
-    )
-
-    # ── Вариант 1: conllu + external ─────────────────────────────────────────
-    print(f"\n{sep}")
-    print("ВАРИАНТ 1: conllu + external (razdel.tokenize в modal)")
-    print(sep)
-    res_1 = parser.parse_text(
-        text_single,
-        output_format="conllu",
-        tokenizer="external",
-        batch_size=args.batch_size,
-    )
-    _print_conllu(res_1)
-    print(f"\nКлючи токена: {list(res_1[0][0].keys()) if res_1 else '—'}")
-
-    # ── Вариант 2: native + external ─────────────────────────────────────────
-    print(f"\n{sep}")
-    print("ВАРИАНТ 2: native + external (razdel.tokenize в modal)")
-    print(sep)
-    res_2 = parser.parse_text(
-        text_single,
-        output_format="native",
-        tokenizer="external",
-        batch_size=args.batch_size,
-    )
-    _print_native(res_2)
-    print(f"\nКлючи токена: {list(res_2[0][0].keys()) if res_2 else '—'}")
-
-    # ── Вариант 3: conllu + internal ─────────────────────────────────────────
-    print(f"\n{sep}")
-    print("ВАРИАНТ 3: conllu + internal (mystem токенизирует сам)")
-    print(sep)
-    res_3 = parser.parse_text(
-        text_single,
-        output_format="conllu",
-        tokenizer="internal",
-        batch_size=args.batch_size,
-    )
-    _print_conllu(res_3)
-
-    # ── Вариант 4: native + internal ─────────────────────────────────────────
-    print(f"\n{sep}")
-    print("ВАРИАНТ 4: native + internal (mystem токенизирует сам)")
-    print(sep)
-    res_4 = parser.parse_text(
-        text_single,
-        output_format="native",
-        tokenizer="internal",
-        batch_size=args.batch_size,
-    )
-    _print_native(res_4)
-
-    # ── parse_batch ───────────────────────────────────────────────────────────
-    print(f"\n{sep}")
-    print("BATCH: conllu + external (2 текста)")
-    print(sep)
-    batch_texts = [
-        "Зло, которым ты меня пугаешь, вовсе не так зло.",
-        "Москва — столица России. Петербург — культурная столица.",
+    # Те же предложения, что и в modal local_entrypoint
+    sentences = [
+        "Мама мыла раму без мыла.",
+        "Привет, как дела?",
+        "Кружка-термос стоит — 500 рублей.",
+        "Он сказал: «Не беспокойтесь».",
     ]
-    batch_results = parser.parse_batch(
-        batch_texts,
+    # Тексты для вывода (что именно ушло в mystem)
+    # external: razdel токенизирует → склеивает через пробел
+    # internal: оригинальное предложение
+    sent_compare = ["Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."]
+
+    # ── 1. EXTERNAL (razdel) → NATIVE ────────────────────────────────────────
+    print(sep)
+    print("Mystem EXTERNAL (tokenizer: razdel) → NATIVE")
+    print(sep)
+    ext_native = parser.parse_text(
+        "\n".join(sentences),
+        output_format="native",
+        tokenizer="external",
+        batch_size=args.batch_size,
+    )
+    # parse_text (external) возвращает List[Tuple[tokens, input_text]]
+    for sent_tokens, input_text in ext_native:
+        print(f"\n  text (sent to mystem): {input_text!r}")
+        for tok in sent_tokens:
+            variants = tok.get("analysis") or []
+            is_punct = tok.get("is_punct", False)
+            if is_punct:
+                print(f"    [{tok['id']:>2}] {tok['text']!r:12}  PUNCT  (no analysis)")
+            else:
+                print(f"    [{tok['id']:>2}] {tok['text']!r:12}  upos={tok['upos']}")
+                for j, var in enumerate(variants, 1):
+                    lex  = var.get("lex", "")
+                    gr   = var.get("gr", "")
+                    wt   = var.get("wt", "")
+                    qual = var.get("qual", "")
+                    extra = []
+                    if wt   != "": extra.append(f"wt={wt}")
+                    if qual != "": extra.append(f"qual={qual}")
+                    extra_str = ", ".join(extra)
+                    print(
+                        f"           {j}: lex={lex!r}  gr={gr!r}"
+                        + (f"  [{extra_str}]" if extra_str else "")
+                    )
+
+    # ── 2. EXTERNAL (razdel) → CONLLU ────────────────────────────────────────
+    print("\n" + sep)
+    print("Mystem EXTERNAL (tokenizer: razdel) → CONLLU")
+    print(sep)
+    ext_conllu = parser.parse_text(
+        "\n".join(sentences),
         output_format="conllu",
         tokenizer="external",
         batch_size=args.batch_size,
     )
-    for idx, (bt, br) in enumerate(zip(batch_texts, batch_results), 1):
-        print(f"\n── Текст {idx}: '{bt}'")
-        _print_conllu(br)
+    ext_input_texts = [text for _, text in ext_conllu]
+    ext_tokens      = [toks for toks, _ in ext_conllu]
+    _print_conllu(ext_input_texts, ext_tokens)
 
-    print(f"\n{'✅ ВСЕ ТЕСТЫ ЗАВЕРШЕНЫ':^72}")
-
-    # ── Сравнение токенизаций: external vs internal ───────────────────────────
-    print(f"\n{sep}")
-    print("СРАВНЕНИЕ ТОКЕНИЗАЦИЙ: external vs internal (conllu)")
+    # ── 3. INTERNAL (mystem) → NATIVE ────────────────────────────────────────
+    print("\n" + sep)
+    print("Mystem INTERNAL (tokenizer: mystem) → NATIVE")
     print(sep)
-
-    res_ext = parser.parse_text(
-        text_multi, output_format="conllu", tokenizer="external",
+    int_native = parser.parse_text(
+        "\n".join(sentences),
+        output_format="native",
+        tokenizer="internal",
         batch_size=args.batch_size,
     )
-    res_int = parser.parse_text(
-        text_multi, output_format="conllu", tokenizer="internal",
+    for i, sent_tokens in enumerate(int_native, 1):
+        print(f"\n  text: {sentences[i - 1]!r}")
+        for tok in sent_tokens:
+            variants = tok.get("analysis") or []
+            is_punct = tok.get("is_punct", False)
+            if is_punct:
+                print(f"    [{tok['id']:>2}] {tok['text']!r:12}  PUNCT  (no analysis)")
+            else:
+                print(f"    [{tok['id']:>2}] {tok['text']!r:12}  upos={tok['upos']}")
+                for j, var in enumerate(variants, 1):
+                    lex  = var.get("lex", "")
+                    gr   = var.get("gr", "")
+                    wt   = var.get("wt", "")
+                    qual = var.get("qual", "")
+                    extra = []
+                    if wt   != "": extra.append(f"wt={wt}")
+                    if qual != "": extra.append(f"qual={qual}")
+                    extra_str = ", ".join(extra)
+                    print(
+                        f"           {j}: lex={lex!r}  gr={gr!r}"
+                        + (f"  [{extra_str}]" if extra_str else "")
+                    )
+
+    # ── 4. INTERNAL (mystem) → CONLLU ────────────────────────────────────────
+    print("\n" + sep)
+    print("Mystem INTERNAL (tokenizer: mystem) → CONLLU")
+    print(sep)
+    int_conllu = parser.parse_text(
+        "\n".join(sentences),
+        output_format="conllu",
+        tokenizer="internal",
+        batch_size=args.batch_size,
+    )
+    _print_conllu(sentences, int_conllu)
+
+    # ── 5. EXTERNAL vs INTERNAL — сравнение ──────────────────────────────────
+    print("\n" + sep)
+    print("EXTERNAL vs INTERNAL — сравнение")
+    print(sep)
+    ext_cmp_raw = parser.parse_text(
+        sent_compare[0],
+        output_format="conllu",
+        tokenizer="external",
+        batch_size=args.batch_size,
+    )
+    ext_cmp = [toks for toks, _ in ext_cmp_raw]
+    int_cmp = parser.parse_text(
+        sent_compare[0],
+        output_format="conllu",
+        tokenizer="internal",
         batch_size=args.batch_size,
     )
 
-    print(
-        f"\n  {'Предл.':<8} {'#':>3}  "
-        f"{'external form':<20} {'internal form':<20} "
-        f"{'UPOS ext':<10} {'UPOS int':<10} match"
-    )
-    print("  " + "─" * 90)
-
-    for s_idx, (s_e, s_i) in enumerate(zip(res_ext, res_int), 1):
-        if len(s_e) != len(s_i):
-            print(
-                f"\n  ⚠️  Предложение {s_idx}: разное кол-во токенов "
-                f"(external={len(s_e)}, internal={len(s_i)}) — "
-                f"токенизации различаются:"
-            )
-            print(f"    external: {[t['form'] for t in s_e]}")
-            print(f"    internal: {[t['form'] for t in s_i]}")
+    for s_idx, (se, si) in enumerate(zip(ext_cmp, int_cmp), 1):
+        print(f"\n  Sentence {s_idx}: {sent_compare[s_idx - 1]!r}")
+        match_icon = "✓" if len(se) == len(si) else "✗"
+        print(f"  Tokens: external={len(se)}, internal={len(si)}  {match_icon}")
+        print(
+            f"\n  {'':>3} {'EXTERNAL':^20} {'INTERNAL':^20} "
+            f"{'UPOS_EXT':^10} {'UPOS_INT':^10}  MATCH"
+        )
+        print("  " + "-" * 75)
+        if len(se) != len(si):
+            print("  ! Количество токенов отличается — построчное сравнение невозможно")
+            print(f"\n  external: {[t['form'] for t in se]}")
+            print(f"  internal: {[t['form'] for t in si]}")
             continue
-        for t_idx, (te, ti) in enumerate(zip(s_e, s_i), 1):
-            form_match = "✅" if te["form"] == ti["form"] else "⚠️ "
-            upos_match = "✅" if te["upos"] == ti["upos"] else "❌"
+        for t_idx, (te, ti) in enumerate(zip(se, si), 1):
+            form_match = "✓" if te["form"] == ti["form"] else "✗"
+            upos_match = "✓" if te["upos"] == ti["upos"] else "✗"
             print(
-                f"  {s_idx:<8} {t_idx:>3}  "
-                f"{te['form']:<20} {ti['form']:<20} "
-                f"{te['upos']:<10} {ti['upos']:<10} "
-                f"upos:{upos_match} form:{form_match}"
+                f"  {t_idx:>3}  {te['form']:^20} {ti['form']:^20} "
+                f"{te['upos']:^10} {ti['upos']:^10} "
+                f"form={form_match} upos={upos_match}"
             )
