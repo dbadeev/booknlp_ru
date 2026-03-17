@@ -215,6 +215,7 @@ class MystemParser:
                 chunk_results = list(self.service.parse_sentence_chunk.map(
                     chunks, kwargs={"output_format": output_format}
                 ))
+                chunk_results = [[toks for toks, _ in chunk] for chunk in chunk_results]
             else:  # internal
                 if len(chunks) == 1:
                     raw = self.service.parse_sentence_chunk_native.remote(chunks[0], output_format=output_format)
@@ -309,6 +310,7 @@ class MystemParser:
                     all_results = list(self.service.parse_sentence_chunk.map(
                         all_chunks, kwargs={"output_format": output_format}
                     ))
+                all_results = [[toks for toks, _ in chunk] for chunk in all_results]
             else:  # internal
                 if len(all_chunks) == 1:
                     all_results = [
@@ -383,7 +385,6 @@ def _print_native(input_texts: list, results: list) -> None:
                           + (f"  [{extra_str}]" if extra_str else ""))
 
 
-# ─── __main__: тест через wrapper (с chunking) ───────────────────────────────
 # ─── __main__: тест через wrapper (с chunking) ────────────────────────────────
 if __name__ == "__main__":
     logging.basicConfig(
@@ -441,9 +442,16 @@ if __name__ == "__main__":
     sent_compare = ["Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."]
 
     # ── 1. EXTERNAL (razdel) → NATIVE ────────────────────────────────────────
+    from razdel import tokenize as razdel_tokenize
+
     print(sep)
     print("Mystem EXTERNAL (tokenizer: razdel) → NATIVE")
     print(sep)
+    input_texts_ext = []
+    for s in sentences:
+        toks = list(razdel_tokenize(s))
+        input_texts_ext.append(" ".join(t.text for t in toks if t.text.strip()))
+
     ext_native = parser.parse_text(
         "\n".join(sentences),
         output_format="native",
@@ -451,7 +459,7 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
     )
     # parse_text (external) возвращает List[Tuple[tokens, input_text]]
-    for sent_tokens, input_text in ext_native:
+    for sent_tokens, input_text in zip(ext_native, input_texts_ext):
         print(f"\n  text (sent to mystem): {input_text!r}")
         for tok in sent_tokens:
             variants = tok.get("analysis") or []
@@ -486,7 +494,7 @@ if __name__ == "__main__":
     )
     ext_input_texts = [text for _, text in ext_conllu]
     ext_tokens      = [toks for toks, _ in ext_conllu]
-    _print_conllu(ext_input_texts, ext_tokens)
+    _print_conllu(input_texts_ext, ext_conllu)
 
     # ── 3. INTERNAL (mystem) → NATIVE ────────────────────────────────────────
     print("\n" + sep)

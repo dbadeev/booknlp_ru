@@ -123,13 +123,13 @@ class MystemService:
         for sent in sentences:
             sent = (sent or "").strip()
             if not sent:
-                results.append(([], sent))
+                results.append([])
                 continue
 
             # 1. razdel даёт позиции токенов
             razdel_tokens = list(self.tokenize(sent))
             if not razdel_tokens:
-                results.append(([], sent))
+                results.append([])
                 continue
 
             # 2. Собираем строку для mystem — ВСЕ токены включая пунктуацию,
@@ -143,10 +143,10 @@ class MystemService:
                     tokens = self._process_native(analysis)
                 else:
                     tokens = self._process_simplified(analysis)
-                results.append((tokens, text_for_mystem))
+                results.append(tokens)
             except Exception as e:
                 self.logger.error(f"mystem.analyze error: {e}")
-                results.append(([], sent))
+                results.append([])
 
         return results
 
@@ -223,7 +223,7 @@ class MystemService:
                 # Словный токен с морфологией
                 gr_first = ana[0].get("gr", "").strip()
                 gr_pos = re.split(r"[,=]", gr_first)[0].strip() if gr_first else ""
-                is_punct = bool(token_text.strip()) and all(ch in PUNCT_CHARS for ch in token_text.strip())
+                # is_punct = bool(token_text.strip()) and all(ch in PUNCT_CHARS for ch in token_text.strip())
                 upos = MYSTEM_TO_UPOS.get(gr_pos, "X")
             else:
                 # Нет analysis — пунктуация или неизвестный символ
