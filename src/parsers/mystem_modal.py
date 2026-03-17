@@ -143,7 +143,7 @@ class MystemService:
                     tokens = self._process_native(analysis)
                 else:
                     tokens = self._process_simplified(analysis)
-                results.append(tokens)
+                results.append((tokens, text_for_mystem))
             except Exception as e:
                 self.logger.error(f"mystem.analyze error: {e}")
                 results.append([])

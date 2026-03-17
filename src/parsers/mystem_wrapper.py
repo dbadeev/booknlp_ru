@@ -211,7 +211,7 @@ class MystemParser:
             if tokenizer == "external":
                 if len(chunks) == 1:
                     raw = self.service.parse_sentence_chunk.remote(chunks[0], output_format=output_format)
-                    return self._merge_chunks([raw])
+                    return [toks for toks, _ in raw]
                 chunk_results = list(self.service.parse_sentence_chunk.map(
                     chunks, kwargs={"output_format": output_format}
                 ))
@@ -311,6 +311,7 @@ class MystemParser:
                         all_chunks, kwargs={"output_format": output_format}
                     ))
                 all_results = [[toks for toks, _ in chunk] for chunk in all_results]
+
             else:  # internal
                 if len(all_chunks) == 1:
                     all_results = [
@@ -492,8 +493,8 @@ if __name__ == "__main__":
         tokenizer="external",
         batch_size=args.batch_size,
     )
-    ext_input_texts = [text for _, text in ext_conllu]
-    ext_tokens      = [toks for toks, _ in ext_conllu]
+    # ext_input_texts = [text for _, text in ext_conllu]
+    # ext_tokens      = [toks for toks, _ in ext_conllu]
     _print_conllu(input_texts_ext, ext_conllu)
 
     # ── 3. INTERNAL (mystem) → NATIVE ────────────────────────────────────────
@@ -545,13 +546,13 @@ if __name__ == "__main__":
     print("\n" + sep)
     print("EXTERNAL vs INTERNAL — сравнение")
     print(sep)
-    ext_cmp_raw = parser.parse_text(
+    ext_cmp = parser.parse_text(
         sent_compare[0],
         output_format="conllu",
         tokenizer="external",
         batch_size=args.batch_size,
     )
-    ext_cmp = [toks for toks, _ in ext_cmp_raw]
+
     int_cmp = parser.parse_text(
         sent_compare[0],
         output_format="conllu",
