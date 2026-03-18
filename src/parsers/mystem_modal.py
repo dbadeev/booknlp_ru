@@ -137,7 +137,7 @@ class MystemService:
             text_for_mystem = " ".join(t.text for t in razdel_tokens if t.text.strip())
 
             try:
-                analysis = self.mystem.analyze(text_for_mystem)
+                analysis: List[Dict[str, Any]] = self.mystem.analyze(text_for_mystem)
                 self._debug_analysis(text_for_mystem, analysis, mode="EXTERNAL (razdel tokenizer)")
                 if output_format == "native":
                     tokens = self._process_native(analysis)
