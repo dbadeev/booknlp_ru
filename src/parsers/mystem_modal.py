@@ -1,6 +1,6 @@
 import logging
 import re
-from typing import List, Dict, Any, Literal
+from typing import List, Dict, Any, Literal, cast
 
 import modal
 
@@ -97,7 +97,9 @@ class MystemService:
                 results.append([])
                 continue
             try:
-                analysis: List[Dict[str, Any]] = self.mystem.analyze(sent)
+                analysis: List[Dict[str, Any]] = cast(
+                    List[Dict[str, Any]], cast(object, self.mystem.analyze(sent))
+                )
                 self._debug_analysis(sent, analysis, mode="INTERNAL (mystem tokenizer)")
                 if output_format == "native":
                     tokens = self._process_native(analysis)
@@ -137,7 +139,9 @@ class MystemService:
             text_for_mystem = " ".join(t.text for t in razdel_tokens if t.text.strip())
 
             try:
-                analysis: List[Dict[str, Any]] = self.mystem.analyze(text_for_mystem)
+                analysis: List[Dict[str, Any]] = cast(
+                    List[Dict[str, Any]], cast(object, self.mystem.analyze(text_for_mystem))
+                )
                 self._debug_analysis(text_for_mystem, analysis, mode="EXTERNAL (razdel tokenizer)")
                 if output_format == "native":
                     tokens = self._process_native(analysis)

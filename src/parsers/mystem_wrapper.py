@@ -369,7 +369,6 @@ def _print_native(input_texts: list, results: list,
     """Выводит результат в native-формате (все поля Mystem)."""
     for i, sent_tokens in enumerate(results, 1):
         print(f"\n  {label}: {input_texts[i - 1]!r}")
-        print(f"\n  text (sent to mystem): {input_texts[i - 1]!r}")
         for tok in sent_tokens:
             variants = tok.get("analysis") or []
             is_punct = tok.get("is_punct", False)
