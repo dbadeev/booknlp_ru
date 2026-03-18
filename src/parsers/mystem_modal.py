@@ -97,7 +97,7 @@ class MystemService:
                 results.append([])
                 continue
             try:
-                analysis = self.mystem.analyze(sent)
+                analysis: List[Dict[str, Any]] = self.mystem.analyze(sent)
                 self._debug_analysis(sent, analysis, mode="INTERNAL (mystem tokenizer)")
                 if output_format == "native":
                     tokens = self._process_native(analysis)
@@ -150,62 +150,64 @@ class MystemService:
 
         return results
 
-    def _merge_punct(self, razdel_tokens, mystem_tokens, output_format: str):
-        """
-        Вставляет пунктуационные токены (от razdel) обратно в список
-        токенов mystem на правильные позиции, перенумеровывая ID.
-        """
-        merged = []
-        m_iter = iter(mystem_tokens)
-        token_id = 1
-
-        for rt in razdel_tokens:
-            text = rt.text
-            if not text.strip():
-                continue  # пробелы пропускаем
-
-            is_punct = all(ch in PUNCT_CHARS for ch in text)
-
-            if is_punct:
-                # Пунктуационный токен — все поля прочерк
-                if output_format == "conllu":
-                    merged.append({
-                        "id":     token_id,
-                        "form":   text,
-                        "lemma":  text,        # лемма = сам знак (CoNLL-U конвенция)
-                        "upos":   "PUNCT",
-                        "xpos":   "_",
-                        "feats":  "_",
-                        "head":   "_",
-                        "deprel": "_",
-                        "deps":   "_",
-                        "misc":   "_",
-                    })
-                else:  # native
-                    merged.append({
-                        "id":       token_id,
-                        "text":     text,
-                        "upos":     "PUNCT",
-                        "analysis": [],
-                        "is_punct": True,
-                    })
-            else:
-                # Словный токен — берём из mystem
-                mt = next(m_iter, None)
-                if mt is None:
-                    break
-                mt["id"] = token_id
-                merged.append(mt)
-
-            token_id += 1
-
-        return merged
+    # @staticmethod
+    # def _merge_punct(razdel_tokens, mystem_tokens, output_format: str):
+    #     """
+    #     Вставляет пунктуационные токены (от razdel) обратно в список
+    #     токенов mystem на правильные позиции, перенумеровывая ID.
+    #     """
+    #     merged = []
+    #     m_iter = iter(mystem_tokens)
+    #     token_id = 1
+    #
+    #     for rt in razdel_tokens:
+    #         text = rt.text
+    #         if not text.strip():
+    #             continue  # пробелы пропускаем
+    #
+    #         is_punct = all(ch in PUNCT_CHARS for ch in text)
+    #
+    #         if is_punct:
+    #             # Пунктуационный токен — все поля прочерк
+    #             if output_format == "conllu":
+    #                 merged.append({
+    #                     "id":     token_id,
+    #                     "form":   text,
+    #                     "lemma":  text,        # лемма = сам знак (CoNLL-U конвенция)
+    #                     "upos":   "PUNCT",
+    #                     "xpos":   "_",
+    #                     "feats":  "_",
+    #                     "head":   "_",
+    #                     "deprel": "_",
+    #                     "deps":   "_",
+    #                     "misc":   "_",
+    #                 })
+    #             else:  # native
+    #                 merged.append({
+    #                     "id":       token_id,
+    #                     "text":     text,
+    #                     "upos":     "PUNCT",
+    #                     "analysis": [],
+    #                     "is_punct": True,
+    #                 })
+    #         else:
+    #             # Словный токен — берём из mystem
+    #             mt = next(m_iter, None)
+    #             if mt is None:
+    #                 break
+    #             mt["id"] = token_id
+    #             merged.append(mt)
+    #
+    #         token_id += 1
+    #
+    #     return merged
 
     # ------------------------------------------------------------------ #
     #  Обработка сырого вывода mystem.analyze                             #
     # ------------------------------------------------------------------ #
 
-    def _process_native(self, analysis: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    @staticmethod
+    def _process_native(analysis: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Обрабатывает analysis из mystem.analyze (entire_input=True).
         Пробелы пропускаются.
@@ -238,7 +240,8 @@ class MystemService:
             })
         return tokens
 
-    def _process_simplified(self, analysis: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    @staticmethod
+    def _process_simplified(analysis: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         CoNLL-U вывод из mystem.analyze (entire_input=True).
         Для пунктуации все поля кроме ID/FORM/LEMMA/UPOS = "_".

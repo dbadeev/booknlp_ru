@@ -82,7 +82,9 @@ class TokenDictNative(TypedDict, total=False):
     """
     id: int
     text: str
+    upos: str
     analysis: List[Dict[str, Any]]
+    is_punct: bool
 
 
 # ─── MystemParser ─────────────────────────────────────────────────────────────
@@ -128,12 +130,12 @@ class MystemParser:
         """
         if batch_size <= 0:
             raise ValueError(f"batch_size must be > 0, got {batch_size}")
-        sentences = list(sentenize(text))
-        if not sentences:
+        sentence_objs = list(sentenize(text))
+        if not sentence_objs:
             return []
         return [
-            [s.text for s in sentences[i:i + batch_size]]
-            for i in range(0, len(sentences), batch_size)
+            [sent_obj.text for sent_obj in sentence_objs[start:start + batch_size]]
+            for start in range(0, len(sentence_objs), batch_size)
         ]
 
     @staticmethod
@@ -211,11 +213,11 @@ class MystemParser:
             if tokenizer == "external":
                 if len(chunks) == 1:
                     raw = self.service.parse_sentence_chunk.remote(chunks[0], output_format=output_format)
-                    return [toks for toks, _ in raw]
+                    return [tokens for tokens, _ in raw]
                 chunk_results = list(self.service.parse_sentence_chunk.map(
                     chunks, kwargs={"output_format": output_format}
                 ))
-                chunk_results = [[toks for toks, _ in chunk] for chunk in chunk_results]
+                chunk_results = [[tokens for tokens, _ in chunk] for chunk in chunk_results]
             else:  # internal
                 if len(chunks) == 1:
                     raw = self.service.parse_sentence_chunk_native.remote(chunks[0], output_format=output_format)
@@ -310,7 +312,7 @@ class MystemParser:
                     all_results = list(self.service.parse_sentence_chunk.map(
                         all_chunks, kwargs={"output_format": output_format}
                     ))
-                all_results = [[toks for toks, _ in chunk] for chunk in all_results]
+                all_results = [[tokens for tokens, _ in chunk] for chunk in all_results]
 
             else:  # internal
                 if len(all_chunks) == 1:
@@ -362,9 +364,11 @@ def _print_conllu(input_texts: list, results: list) -> None:
             if misc != "_":
                 print(f"         misc: {misc}")
 
-def _print_native(input_texts: list, results: list) -> None:
+def _print_native(input_texts: list, results: list,
+                  label: str = "text (sent to mystem)") -> None:
     """Выводит результат в native-формате (все поля Mystem)."""
     for i, sent_tokens in enumerate(results, 1):
+        print(f"\n  {label}: {input_texts[i - 1]!r}")
         print(f"\n  text (sent to mystem): {input_texts[i - 1]!r}")
         for tok in sent_tokens:
             variants = tok.get("analysis") or []
@@ -459,29 +463,30 @@ if __name__ == "__main__":
         tokenizer="external",
         batch_size=args.batch_size,
     )
-    # parse_text (external) возвращает List[Tuple[tokens, input_text]]
-    for sent_tokens, input_text in zip(ext_native, input_texts_ext):
-        print(f"\n  text (sent to mystem): {input_text!r}")
-        for tok in sent_tokens:
-            variants = tok.get("analysis") or []
-            is_punct = tok.get("is_punct", False)
-            if is_punct:
-                print(f"    [{tok['id']:>2}] {tok['text']!r:12}  PUNCT  (no analysis)")
-            else:
-                print(f"    [{tok['id']:>2}] {tok['text']!r:12}  upos={tok['upos']}")
-                for j, var in enumerate(variants, 1):
-                    lex  = var.get("lex", "")
-                    gr   = var.get("gr", "")
-                    wt   = var.get("wt", "")
-                    qual = var.get("qual", "")
-                    extra = []
-                    if wt   != "": extra.append(f"wt={wt}")
-                    if qual != "": extra.append(f"qual={qual}")
-                    extra_str = ", ".join(extra)
-                    print(
-                        f"           {j}: lex={lex!r}  gr={gr!r}"
-                        + (f"  [{extra_str}]" if extra_str else "")
-                    )
+    # # parse_text (external) возвращает List[Tuple[tokens, input_text]]
+    # for sent_tokens, input_text in zip(ext_native, input_texts_ext):
+    #     print(f"\n  text (sent to mystem): {input_text!r}")
+    #     for tok in sent_tokens:
+    #         variants = tok.get("analysis") or []
+    #         is_punct = tok.get("is_punct", False)
+    #         if is_punct:
+    #             print(f"    [{tok['id']:>2}] {tok['text']!r:12}  PUNCT  (no analysis)")
+    #         else:
+    #             print(f"    [{tok['id']:>2}] {tok['text']!r:12}  upos={tok['upos']}")
+    #             for j, var in enumerate(variants, 1):
+    #                 lex  = var.get("lex", "")
+    #                 gr   = var.get("gr", "")
+    #                 wt   = var.get("wt", "")
+    #                 qual = var.get("qual", "")
+    #                 extra = []
+    #                 if wt   != "": extra.append(f"wt={wt}")
+    #                 if qual != "": extra.append(f"qual={qual}")
+    #                 extra_str = ", ".join(extra)
+    #                 print(
+    #                     f"           {j}: lex={lex!r}  gr={gr!r}"
+    #                     + (f"  [{extra_str}]" if extra_str else "")
+    #                 )
+    _print_native(input_texts_ext, ext_native)
 
     # ── 2. EXTERNAL (razdel) → CONLLU ────────────────────────────────────────
     print("\n" + sep)
@@ -507,28 +512,30 @@ if __name__ == "__main__":
         tokenizer="internal",
         batch_size=args.batch_size,
     )
-    for i, sent_tokens in enumerate(int_native, 1):
-        print(f"\n  text: {sentences[i - 1]!r}")
-        for tok in sent_tokens:
-            variants = tok.get("analysis") or []
-            is_punct = tok.get("is_punct", False)
-            if is_punct:
-                print(f"    [{tok['id']:>2}] {tok['text']!r:12}  PUNCT  (no analysis)")
-            else:
-                print(f"    [{tok['id']:>2}] {tok['text']!r:12}  upos={tok['upos']}")
-                for j, var in enumerate(variants, 1):
-                    lex  = var.get("lex", "")
-                    gr   = var.get("gr", "")
-                    wt   = var.get("wt", "")
-                    qual = var.get("qual", "")
-                    extra = []
-                    if wt   != "": extra.append(f"wt={wt}")
-                    if qual != "": extra.append(f"qual={qual}")
-                    extra_str = ", ".join(extra)
-                    print(
-                        f"           {j}: lex={lex!r}  gr={gr!r}"
-                        + (f"  [{extra_str}]" if extra_str else "")
-                    )
+    # for i, sent_tokens in enumerate(int_native, 1):
+    #     print(f"\n  text: {sentences[i - 1]!r}")
+    #     for tok in sent_tokens:
+    #         variants = tok.get("analysis") or []
+    #         is_punct = tok.get("is_punct", False)
+    #         if is_punct:
+    #             print(f"    [{tok['id']:>2}] {tok['text']!r:12}  PUNCT  (no analysis)")
+    #         else:
+    #             print(f"    [{tok['id']:>2}] {tok['text']!r:12}  upos={tok['upos']}")
+    #             for j, var in enumerate(variants, 1):
+    #                 lex  = var.get("lex", "")
+    #                 gr   = var.get("gr", "")
+    #                 wt   = var.get("wt", "")
+    #                 qual = var.get("qual", "")
+    #                 extra = []
+    #                 if wt   != "": extra.append(f"wt={wt}")
+    #                 if qual != "": extra.append(f"qual={qual}")
+    #                 extra_str = ", ".join(extra)
+    #                 print(
+    #                     f"           {j}: lex={lex!r}  gr={gr!r}"
+    #                     + (f"  [{extra_str}]" if extra_str else "")
+    #                 )
+
+    _print_native(sentences, int_native, label="text")
 
     # ── 4. INTERNAL (mystem) → CONLLU ────────────────────────────────────────
     print("\n" + sep)
