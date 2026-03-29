@@ -4,10 +4,13 @@ from typing import Any, Dict, List, Literal, Tuple
 
 # ─── Modal image ──────────────────────────────────────────────────────────────
 def _download_models():
-    """Теперь только rulemma — её модель грузится отдельно."""
+    """
+    rupostagger использует ruword2tags.db, вшитый через copy_local_file —
+    сетевой вызов не нужен, load() в @modal.enter() читает из образа
+    """
     import rulemma
     print("Загружаем rulemma...")
-    l = rulemma.Lemmatizer()
+    l = rulemma.Lemmatizer()    # rulemma скачивает свои модели через gdown
     l.load()
     print("✓ rulemma загружена.")
 
@@ -254,7 +257,7 @@ CONLLU_HEADER = "# ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
 def _print_conllu(text: str, conllu: str) -> None:
     """Выводит CoNLL-U блок с текстом предложения и заголовком столбцов."""
     print(f"\n# text = {text}")
-    print(CONLLU_HEADER)
+    # print(CONLLU_HEADER)
     print(conllu)
 
 
@@ -292,6 +295,7 @@ def main():
     print("2. parse_sentence_chunk — RAZDEL PATH, CONLL-U")
     print(sep)
     result_conllu = service.parse_sentence_chunk.remote(chunk, output_format="conllu")
+    print(CONLLU_HEADER)
     _print_conllu(text_multi, result_conllu)
 
     # ── 3. parse_sentence_chunk_native — native path, NATIVE ──────────────────
@@ -315,6 +319,7 @@ def main():
     result_native_conllu = service.parse_sentence_chunk_native.remote(
         chunk_texts, output_format="conllu"
     )
+    print(CONLLU_HEADER)
     _print_conllu(text_multi, result_native_conllu)
 
     # ── 5. parse — одиночное предложение напрямую ─────────────────────────────
@@ -327,6 +332,7 @@ def main():
         _print_token(tok)
 
     result_single_conllu = service.parse.remote(text_single, output_format="conllu")
+    print(CONLLU_HEADER)
     _print_conllu(text_single, result_single_conllu)
 
     print(f"\n{'✅ Тестирование завершено!':^72}")

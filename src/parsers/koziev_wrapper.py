@@ -133,8 +133,22 @@ class KozievWrapper:
         """
         if output_format == "conllu":
             parts = [cr.strip() for cr in chunk_results if cr.strip()]
-            return "\n\n".join(parts) + "\n" if parts else ""
+            merged = "\n\n".join(parts) + "\n" if parts else ""
+            return KozievWrapper._renumber_sent_ids(merged)
         return [sent for cr in chunk_results for sent in cr]
+
+    @staticmethod
+    def _renumber_sent_ids(conllu: str) -> str:
+        """Перенумеровывает # sent_id глобально в объединённом CoNLL-U."""
+        counter = 0
+        lines = []
+        for line in conllu.splitlines():
+            if line.startswith("# sent_id"):
+                counter += 1
+                lines.append(f"# sent_id = {counter}")
+            else:
+                lines.append(line)
+        return "\n".join(lines) + "\n"
 
     # ─── Public API ───────────────────────────────────────────────────────────
     def parse_text(
@@ -272,7 +286,7 @@ def _print_token(tok: Dict[str, Any]) -> None:
 
 def _print_conllu(text: str, conllu: str) -> None:
     print(f"\n# text = {text}")
-    print(CONLLU_HEADER)
+    # print(CONLLU_HEADER)
     print(conllu)
 
 
@@ -350,6 +364,7 @@ if __name__ == "__main__":
     print(f"\n{sep}")
     print("ВАРИАНТ 3: CONLL-U + RAZDEL PATH")
     print(sep)
+    print(CONLLU_HEADER)
     _print_conllu(
         text_multi,
         wrapper.parse_text(
@@ -362,6 +377,7 @@ if __name__ == "__main__":
     print(f"\n{sep}")
     print("ВАРИАНТ 4: CONLL-U + NATIVE PATH")
     print(sep)
+    print(CONLLU_HEADER)
     _print_conllu(
         text_multi,
         wrapper.parse_text(
@@ -381,6 +397,7 @@ if __name__ == "__main__":
     )
     for idx, (batch_text, batch_res) in enumerate(zip(batch_texts, batch_results), 1):
         print(f"\n── Текст {idx}: '{batch_text}'")
+        print(CONLLU_HEADER)
         _print_conllu(batch_text, batch_res)
 
     print(f"\n{'✅ ВСЕ ТЕСТЫ ЗАВЕРШЕНЫ':^72}")
