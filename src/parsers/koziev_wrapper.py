@@ -53,7 +53,7 @@ TokenizerType = Literal["native", "razdel"]
 
 default_chunk_size: int = 10  # предложений на чанк; подбирается под GPU и тип текста
 
-CONLLU_HEADER = "# ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
+# CONLLU_HEADER = "# ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
 
 
 class KozievWrapper:
@@ -284,8 +284,8 @@ def _print_token(tok: Dict[str, Any]) -> None:
     print(f"     feats: {tok['feats']}")
 
 
-def _print_conllu(text: str, conllu: str) -> None:
-    print(f"\n# text = {text}")
+def _print_conllu(conllu: str) -> None:
+    # print(f"\n# text = {text}")
     # print(CONLLU_HEADER)
     print(conllu)
 
@@ -364,9 +364,8 @@ if __name__ == "__main__":
     print(f"\n{sep}")
     print("ВАРИАНТ 3: CONLL-U + RAZDEL PATH")
     print(sep)
-    print(CONLLU_HEADER)
+    # print(CONLLU_HEADER)
     _print_conllu(
-        text_multi,
         wrapper.parse_text(
             text_multi, output_format="conllu", tokenizer="razdel",
             chunk_size=args.chunk_size,
@@ -377,9 +376,8 @@ if __name__ == "__main__":
     print(f"\n{sep}")
     print("ВАРИАНТ 4: CONLL-U + NATIVE PATH")
     print(sep)
-    print(CONLLU_HEADER)
+    # print(CONLLU_HEADER)
     _print_conllu(
-        text_multi,
         wrapper.parse_text(
             text_multi, output_format="conllu", tokenizer="native",
             chunk_size=args.chunk_size,
@@ -397,7 +395,7 @@ if __name__ == "__main__":
     )
     for idx, (batch_text, batch_res) in enumerate(zip(batch_texts, batch_results), 1):
         print(f"\n── Текст {idx}: '{batch_text}'")
-        print(CONLLU_HEADER)
-        _print_conllu(batch_text, batch_res)
+        # print(CONLLU_HEADER)
+        _print_conllu(batch_res)
 
     print(f"\n{'✅ ВСЕ ТЕСТЫ ЗАВЕРШЕНЫ':^72}")

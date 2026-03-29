@@ -141,7 +141,10 @@ class KozievService:
         HEAD=0 / DEPREL=root для всех токенов — заглушка:
         синтаксический разбор в pipeline Козиева отсутствует.
         """
-        lines = [f"# sent_id = {sent_id}", f"# text = {sent_text}"]
+        lines = [f"# sent_id = {sent_id}",
+                 f"# text = {sent_text}",
+                 CONLLU_HEADER,
+                 ]
         for i, (word, pos_tags, lemma, *_) in enumerate(lemmas, start=1):
             upos, feats = KozievService._parse_pos_tags(pos_tags)
             # XPOS="_" — rupostagger не разделяет UPOS/XPOS
@@ -251,12 +254,12 @@ def _print_token(tok: Dict[str, Any]) -> None:
     print(f"     feats: {tok['feats']}")
 
 
-CONLLU_HEADER = "# ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
+CONLLU_HEADER = "ID  \tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
 
 
-def _print_conllu(text: str, conllu: str) -> None:
+def _print_conllu(conllu: str) -> None:
     """Выводит CoNLL-U блок с текстом предложения и заголовком столбцов."""
-    print(f"\n# text = {text}")
+    # print(f"\n# text = {text}")
     # print(CONLLU_HEADER)
     print(conllu)
 
@@ -295,8 +298,8 @@ def main():
     print("2. parse_sentence_chunk — RAZDEL PATH, CONLL-U")
     print(sep)
     result_conllu = service.parse_sentence_chunk.remote(chunk, output_format="conllu")
-    print(CONLLU_HEADER)
-    _print_conllu(text_multi, result_conllu)
+    # print(CONLLU_HEADER)
+    _print_conllu(result_conllu)
 
     # ── 3. parse_sentence_chunk_native — native path, NATIVE ──────────────────
     print(f"\n{sep}")
@@ -319,8 +322,8 @@ def main():
     result_native_conllu = service.parse_sentence_chunk_native.remote(
         chunk_texts, output_format="conllu"
     )
-    print(CONLLU_HEADER)
-    _print_conllu(text_multi, result_native_conllu)
+    # print(CONLLU_HEADER)
+    _print_conllu(result_native_conllu)
 
     # ── 5. parse — одиночное предложение напрямую ─────────────────────────────
     print(f"\n{sep}")
@@ -332,7 +335,8 @@ def main():
         _print_token(tok)
 
     result_single_conllu = service.parse.remote(text_single, output_format="conllu")
-    print(CONLLU_HEADER)
-    _print_conllu(text_single, result_single_conllu)
+    # print(CONLLU_HEADER)
+    print(f"\nCONLL-U:")
+    _print_conllu(result_single_conllu)
 
     print(f"\n{'✅ Тестирование завершено!':^72}")
