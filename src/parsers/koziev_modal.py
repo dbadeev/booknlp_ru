@@ -4,34 +4,29 @@ from typing import Any, Dict, List, Literal, Tuple
 
 # ─── Modal image ──────────────────────────────────────────────────────────────
 def _download_models():
-    """Выполняется при сборке образа Modal — скачивает модели в контейнер."""
-    import rupostagger
+    """Теперь только rulemma — её модель грузится отдельно."""
     import rulemma
-
-    print("Загружаем rupostagger (скачает модель через gdown)...")
-    tagger = rupostagger.RuPosTagger()
-    tagger.load()
-
-    print("Загружаем rulemma (скачает модель через gdown)...")
-    lemmatizer = rulemma.Lemmatizer()
-    lemmatizer.load()
-
-    print("✓ Все модели Козиева загружены и закешированы в образе.")
-
+    print("Загружаем rulemma...")
+    l = rulemma.Lemmatizer()
+    l.load()
+    print("✓ rulemma загружена.")
 
 koziev_image = (
     modal.Image.debian_slim()
     .apt_install("git", "build-essential")
     .pip_install(
-        # Внешние зависимости (незадекларированные в setup.py Козиева)
         "python-crfsuite",
         "gdown",
-        # Собственные пакеты Козиева — в порядке зависимостей
-        "git+https://github.com/Koziev/rusyllab",      # ← нужен rupostagger
-        "git+https://github.com/Koziev/ruword2tags",   # ← нужен rupostagger
+        "git+https://github.com/Koziev/rusyllab",
+        "git+https://github.com/Koziev/ruword2tags",
         "git+https://github.com/Koziev/rutokenizer",
         "git+https://github.com/Koziev/rupostagger",
         "git+https://github.com/Koziev/rulemma",
+    )
+    .add_local_file(
+        "./src/parsers/ruword2tags.db",
+        "/usr/local/lib/python3.11/site-packages/ruword2tags/ruword2tags.db",
+        copy=True,
     )
     .run_function(_download_models)
 )
