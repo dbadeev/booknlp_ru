@@ -3,15 +3,28 @@ import logging
 from typing import Any, Dict, List, Literal, Tuple
 
 # ─── Modal image ──────────────────────────────────────────────────────────────
+def download_koziev_models():
+    import rupostagger
+    import rulemma
+    p = rupostagger.RuPosTagger()
+    p.load()
+    l = rulemma.Lemmatizer()
+    l.load()
+    print("✓ Koziev models downloaded and cached in image.")
+
+# ─── Modal image ──────────────────────────────────────────────────────────────
 koziev_image = (
     modal.Image.debian_slim()
-    .apt_install("git", "build-essential")   # build-essential на случай сборки из исходников
+    .apt_install("git", "build-essential")
     .pip_install(
         "python-crfsuite",
+        "gdown",
+        "git+https://github.com/Koziev/ruword2tags",
         "git+https://github.com/Koziev/rutokenizer",
         "git+https://github.com/Koziev/rupostagger",
         "git+https://github.com/Koziev/rulemma",
     )
+    .run_function(download_koziev_models)
 )
 
 app = modal.App("booknlp-ru-koziev-service")
@@ -254,6 +267,7 @@ def main():
     Тестирует KozievService напрямую — без wrapper, без chunking.
     Проверяет оба production-метода, оба формата вывода и вспомогательный parse.
     """
+
     from razdel import sentenize
 
     service = KozievService()
