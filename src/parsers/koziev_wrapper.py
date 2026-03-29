@@ -374,7 +374,7 @@ if __name__ == "__main__":
     print(f"\n{sep}")
     print("BATCH: CONLL-U + RAZDEL (2 текста)")
     print(sep)
-    batch_texts = [text_single, "Зло, которым пугаешь, не так зло."]
+    batch_texts = [text_single, "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."]
     batch_results = wrapper.parse_batch(
         batch_texts, output_format="conllu", tokenizer="razdel",
         chunk_size=args.chunk_size,

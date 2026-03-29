@@ -56,15 +56,19 @@ class KozievService:
     @modal.enter()
     def load_models(self):
         import rutokenizer, rupostagger, rulemma
+        import logging
+
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger("KozievService")
 
         self.tokenizer = rutokenizer.Tokenizer()
-        self.tokenizer.load()  # читает локальный кэш — быстро
+        self.tokenizer.load()
 
         self.tagger = rupostagger.RuPosTagger()
-        self.tagger.load()  # читает локальный кэш — быстро
+        self.tagger.load()
 
         self.lemmatizer = rulemma.Lemmatizer()
-        self.lemmatizer.load()  # читает локальный кэш — быстро
+        self.lemmatizer.load()
 
         self.logger.info("✓ Koziev models loaded from image cache.")
 
