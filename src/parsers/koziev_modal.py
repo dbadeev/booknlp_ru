@@ -3,28 +3,37 @@ import logging
 from typing import Any, Dict, List, Literal, Tuple
 
 # ─── Modal image ──────────────────────────────────────────────────────────────
-def download_koziev_models():
+def _download_models():
+    """Выполняется при сборке образа Modal — скачивает модели в контейнер."""
     import rupostagger
     import rulemma
-    p = rupostagger.RuPosTagger()
-    p.load()
-    l = rulemma.Lemmatizer()
-    l.load()
-    print("✓ Koziev models downloaded and cached in image.")
 
-# ─── Modal image ──────────────────────────────────────────────────────────────
+    print("Загружаем rupostagger (скачает модель через gdown)...")
+    tagger = rupostagger.RuPosTagger()
+    tagger.load()
+
+    print("Загружаем rulemma (скачает модель через gdown)...")
+    lemmatizer = rulemma.Lemmatizer()
+    lemmatizer.load()
+
+    print("✓ Все модели Козиева загружены и закешированы в образе.")
+
+
 koziev_image = (
     modal.Image.debian_slim()
     .apt_install("git", "build-essential")
     .pip_install(
+        # Внешние зависимости (незадекларированные в setup.py Козиева)
         "python-crfsuite",
         "gdown",
-        "git+https://github.com/Koziev/ruword2tags",
+        # Собственные пакеты Козиева — в порядке зависимостей
+        "git+https://github.com/Koziev/rusyllab",      # ← нужен rupostagger
+        "git+https://github.com/Koziev/ruword2tags",   # ← нужен rupostagger
         "git+https://github.com/Koziev/rutokenizer",
         "git+https://github.com/Koziev/rupostagger",
         "git+https://github.com/Koziev/rulemma",
     )
-    .run_function(download_koziev_models)
+    .run_function(_download_models)
 )
 
 app = modal.App("booknlp-ru-koziev-service")
@@ -51,28 +60,18 @@ class KozievService:
 
     @modal.enter()
     def load_models(self):
-        """Загрузка моделей при старте контейнера."""
-        import rutokenizer
-        import rupostagger
-        import rulemma
-
-        logging.basicConfig(level=logging.INFO)
-        self.logger = logging.getLogger("KozievService")
+        import rutokenizer, rupostagger, rulemma
 
         self.tokenizer = rutokenizer.Tokenizer()
-        self.tokenizer.load()
-        self.tagger = rupostagger.RuPosTagger()
-        self.tagger.load()
-        self.lemmatizer = rulemma.Lemmatizer()
-        self.lemmatizer.load()
+        self.tokenizer.load()  # читает локальный кэш — быстро
 
-        self.logger.info(
-            "Koziev models loaded (rutokenizer + rupostagger + rulemma)!"
-        )
-        self.logger.info(
-            "Ready: razdel path → parse_sentence_chunk, "
-            "native path → parse_sentence_chunk_native"
-        )
+        self.tagger = rupostagger.RuPosTagger()
+        self.tagger.load()  # читает локальный кэш — быстро
+
+        self.lemmatizer = rulemma.Lemmatizer()
+        self.lemmatizer.load()  # читает локальный кэш — быстро
+
+        self.logger.info("✓ Koziev models loaded from image cache.")
 
     # ─── Internal helpers ──────────────────────────────────────────────────────
     def _analyze(self, sent_text: str):
