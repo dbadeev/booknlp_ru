@@ -4,43 +4,46 @@
 
 Wrapper — тонкий клиент. Три обязанности:
   1. Сентенизация текста (razdel.sentenize) и разбивка на чанки.
-  2. Маршрутизация чанков в нужный Modal-метод (razdel / native ветка).
-  3. Сборка результатов чанков в единый ответ.
+  2. При tokenizer="razdel": токенизация слов (razdel.tokenize) локально.
+  3. Маршрутизация чанков в нужный Modal-метод и сборка результатов.
 
-Вся NLP-логика (rutokenizer, rupostagger, rulemma) — в koziev_modal.py.
-Сентенизация ВСЕГДА выполняется здесь, через razdel.sentenize,
-ДО отправки в Modal.
+Вся NLP-логика (rupostagger, rulemma) — в koziev_modal.py.
+Сентенизация ВСЕГДА выполняется здесь, через razdel.sentenize, ДО отправки.
 
-Два пути (оба используют razdel.sentenize для сентенизации):
+Два пути (оба используют razdel.sentenize):
 
-  razdel (с символьными офсетами):
-      sentenize → List[List[(text, start_char)]]
-      → service.parse_sentence_chunk.map(chunks)
-
-  native (без символьных офсетов):
+  tokenizer="native" — слова токенизирует rutokenizer ВНУТРИ Modal:
       sentenize → List[List[str]]
       → service.parse_sentence_chunk_native.map(chunks)
+      Офсеты: НЕТ
+
+  tokenizer="razdel" — слова токенизирует razdel.tokenize ЗДЕСЬ, в wrapper:
+      sentenize + tokenize → List[List[(text, tokens, start_char)]]
+      → service.parse_pretokenized_chunk.map(chunks)
+      Офсеты: ДА (из razdel.sentenize .start)
 
 Использование:
     from koziev_wrapper import KozievWrapper
 
     wrapper = KozievWrapper()
-    # 4 варианта (2 формата × 2 пути):
-    result = wrapper.parse_text(text, output_format="native",  tokenizer="razdel")
+    # tokenizer="native"  — rutokenizer в Modal, без офсетов
     result = wrapper.parse_text(text, output_format="native",  tokenizer="native")
-    result = wrapper.parse_text(text, output_format="conllu",  tokenizer="razdel")
     result = wrapper.parse_text(text, output_format="conllu",  tokenizer="native")
 
-    # chunk_size подбирается под GPU и тип текста (по умолчанию 10):
+    # tokenizer="razdel" — razdel.tokenize локально, с офсетами
+    result = wrapper.parse_text(text, output_format="native",  tokenizer="razdel")
+    result = wrapper.parse_text(text, output_format="conllu",  tokenizer="razdel")
+
+    # chunk_size подбирается под GPU и тип текста:
     result = wrapper.parse_text(text, tokenizer="razdel", chunk_size=5)
 """
 
 import argparse
 import logging
-import json
 import sys
 import modal
 from razdel import sentenize
+from razdel import tokenize as razdel_tokenize
 from typing import Any, Dict, List, Literal, Tuple, Union
 
 logging.basicConfig(
@@ -53,18 +56,17 @@ TokenizerType = Literal["native", "razdel"]
 
 default_chunk_size: int = 10  # предложений на чанк; подбирается под GPU и тип текста
 
-# CONLLU_HEADER = "# ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
-
 
 class KozievWrapper:
     """
     Клиент для Koziev парсера (Modal).
 
     Поддерживает:
-      - 2 формата: native (словари токенов), conllu (стандарт UD)
-      - 2 пути: razdel (с символьными офсетами), native (только тексты)
+      - 2 токенизатора слов: native (rutokenizer внутри Modal),
+                             razdel (razdel.tokenize локально)
+      - 2 формата вывода:   native (словари), conllu (стандарт UD)
 
-    Сентенизация выполняется локально (razdel.sentenize) до отправки в Modal.
+    Сентенизация — всегда razdel.sentenize, локально, ДО отправки в Modal.
     Чанки распределяются по контейнерам через .map().
     """
 
@@ -80,27 +82,6 @@ class KozievWrapper:
             raise
 
     # ─── Chunking ─────────────────────────────────────────────────────────────
-    @staticmethod
-    def _split_to_chunks(
-        text: str,
-        chunk_size: int,
-        base_offset: int = 0,
-    ) -> List[List[Tuple[str, int]]]:
-        """
-        Razdel path: разбивает текст на чанки с символьными офсетами.
-
-        Returns:
-            List[List[(sentence_text, start_char_in_original)]]
-        base_offset — смещение text в более крупном документе
-                      (используется в parse_batch).
-        """
-        if chunk_size <= 0:
-            raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
-        sentences = list(sentenize(text))
-        return [
-            [(s.text, base_offset + s.start) for s in sentences[i : i + chunk_size]]
-            for i in range(0, len(sentences), chunk_size)
-        ]
 
     @staticmethod
     def _split_to_sentence_chunks(
@@ -109,6 +90,7 @@ class KozievWrapper:
     ) -> List[List[str]]:
         """
         Native path: разбивает текст на чанки предложений (только тексты).
+        rutokenizer получит эти тексты и токенизирует слова внутри Modal.
 
         Returns:
             List[List[str]]
@@ -117,7 +99,39 @@ class KozievWrapper:
             raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
         sentences = list(sentenize(text))
         return [
-            [s.text for s in sentences[i : i + chunk_size]]
+            [s.text for s in sentences[i: i + chunk_size]]
+            for i in range(0, len(sentences), chunk_size)
+        ]
+
+    @staticmethod
+    def _split_to_razdel_chunks(
+        text: str,
+        chunk_size: int,
+        base_offset: int = 0,
+    ) -> List[List[Tuple[str, List[str], int]]]:
+        """
+        Razdel path: разбивает текст на чанки с локальной токенизацией слов.
+        Каждое предложение = (текст, список_токенов, символьный_офсет_в_документе).
+
+        razdel.tokenize выполняется ЗДЕСЬ, в wrapper, ДО отправки в Modal —
+        это и есть «внешний токенизатор».
+
+        Returns:
+            List[List[(sentence_text, tokens, start_char)]]
+        base_offset используется в parse_batch для документов с ненулевым офсетом.
+        """
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
+        sentences = list(sentenize(text))
+        return [
+            [
+                (
+                    s.text,
+                    [t.text for t in razdel_tokenize(s.text)],
+                    base_offset + s.start,
+                )
+                for s in sentences[i: i + chunk_size]
+            ]
             for i in range(0, len(sentences), chunk_size)
         ]
 
@@ -128,8 +142,9 @@ class KozievWrapper:
     ) -> Union[List[Dict[str, Any]], str]:
         """
         Склеивает результаты чанков в единый ответ.
-          native → List[Dict] (предложения из всех чанков, плоский список)
+          native → плоский List[Dict] (предложения из всех чанков)
           conllu → str (CoNLL-U блоки через двойной перенос строки)
+                   с последующей перенумерацией sent_id.
         """
         if output_format == "conllu":
             parts = [cr.strip() for cr in chunk_results if cr.strip()]
@@ -139,7 +154,7 @@ class KozievWrapper:
 
     @staticmethod
     def _renumber_sent_ids(conllu: str) -> str:
-        """Перенумеровывает # sent_id глобально в объединённом CoNLL-U."""
+        """Перенумеровывает # sent_id глобально в объединённом CoNLL-U блоке."""
         counter = 0
         lines = []
         for line in conllu.splitlines():
@@ -151,6 +166,7 @@ class KozievWrapper:
         return "\n".join(lines) + "\n"
 
     # ─── Public API ───────────────────────────────────────────────────────────
+
     def parse_text(
         self,
         text: str,
@@ -164,49 +180,62 @@ class KozievWrapper:
         Алгоритм:
           1. Разбить текст на предложения (razdel.sentenize).
           2. Сгруппировать в чанки по chunk_size.
-          3. Один чанк → .remote(); несколько → .map() (параллельно).
-          4. Склеить результаты.
+          3. tokenizer="native":
+               только тексты → parse_sentence_chunk_native (rutokenizer в Modal)
+             tokenizer="razdel":
+               тексты + razdel-токены + офсеты → parse_pretokenized_chunk
+          4. Один чанк → .remote(); несколько → .map() (параллельно).
+          5. Склеить результаты, перенумеровать sent_id.
 
         Args:
             text:          Входной текст
             output_format: 'native' | 'conllu'
-            tokenizer:     'razdel' (с символьными офсетами)
-                         | 'native' (без офсетов, только тексты)
-            chunk_size:    Предложений на чанк (подбирается под GPU и тип текста).
-                           По умолчанию default_chunk_size = 10.
+            tokenizer:     'native' — rutokenizer токенизирует слова в Modal
+                           'razdel' — razdel.tokenize токенизирует здесь, результаты
+                                      отправляются предтокенизированными
+            chunk_size:    Предложений на чанк. По умолчанию = 10.
 
         Returns:
             native → List[Dict]
             conllu → str
         """
         try:
-            if tokenizer == "razdel":
-                chunks = self._split_to_chunks(text, chunk_size)
-                if not chunks:
-                    return [] if output_format == "native" else ""
-                if len(chunks) == 1:
-                    return self.service.parse_sentence_chunk.remote(
-                        chunks[0], output_format=output_format
-                    )
-                chunk_results = list(
-                    self.service.parse_sentence_chunk.map(
-                        chunks, kwargs={"output_format": output_format}
-                    )
-                )
-            else:  # native
+            if tokenizer == "native":
                 chunks = self._split_to_sentence_chunks(text, chunk_size)
                 if not chunks:
                     return [] if output_format == "native" else ""
                 if len(chunks) == 1:
-                    return self.service.parse_sentence_chunk_native.remote(
+                    result = self.service.parse_sentence_chunk_native.remote(
                         chunks[0], output_format=output_format
                     )
+                    if output_format == "conllu":
+                        result = self._renumber_sent_ids(result)
+                    return result
                 chunk_results = list(
                     self.service.parse_sentence_chunk_native.map(
                         chunks, kwargs={"output_format": output_format}
                     )
                 )
+
+            else:  # tokenizer == "razdel"
+                chunks = self._split_to_razdel_chunks(text, chunk_size)
+                if not chunks:
+                    return [] if output_format == "native" else ""
+                if len(chunks) == 1:
+                    result = self.service.parse_pretokenized_chunk.remote(
+                        chunks[0], output_format=output_format
+                    )
+                    if output_format == "conllu":
+                        result = self._renumber_sent_ids(result)
+                    return result
+                chunk_results = list(
+                    self.service.parse_pretokenized_chunk.map(
+                        chunks, kwargs={"output_format": output_format}
+                    )
+                )
+
             return self._merge_chunks(chunk_results, output_format)
+
         except Exception as exc:
             self.logger.error(f"❌ Error during Koziev parsing: {exc}")
             raise
@@ -225,7 +254,7 @@ class KozievWrapper:
         Args:
             texts:         Список текстов
             output_format: 'native' | 'conllu'
-            tokenizer:     'razdel' | 'native'
+            tokenizer:     'native' | 'razdel'
             chunk_size:    Предложений на чанк
 
         Returns:
@@ -233,43 +262,45 @@ class KozievWrapper:
         """
         try:
             chunks_per_text: List[int] = []
-            if tokenizer == "razdel":
-                all_chunks: List[List[Tuple[str, int]]] = []
+
+            if tokenizer == "native":
+                all_chunks: List[List[str]] = []
                 for text in texts:
-                    text_chunks = self._split_to_chunks(text, chunk_size)
+                    text_chunks = self._split_to_sentence_chunks(text, chunk_size)
                     chunks_per_text.append(len(text_chunks))
                     all_chunks.extend(text_chunks)
                 if not all_chunks:
                     return [[] if output_format == "native" else "" for _ in texts]
                 all_results = list(
-                    self.service.parse_sentence_chunk.map(
+                    self.service.parse_sentence_chunk_native.map(
                         all_chunks, kwargs={"output_format": output_format}
                     )
                 )
-            else:  # native
-                all_chunks_native: List[List[str]] = []
+
+            else:  # tokenizer == "razdel"
+                all_chunks_r: List[List[Tuple[str, List[str], int]]] = []
                 for text in texts:
-                    text_chunks = self._split_to_sentence_chunks(text, chunk_size)
+                    text_chunks = self._split_to_razdel_chunks(text, chunk_size)
                     chunks_per_text.append(len(text_chunks))
-                    all_chunks_native.extend(text_chunks)
-                if not all_chunks_native:
+                    all_chunks_r.extend(text_chunks)
+                if not all_chunks_r:
                     return [[] if output_format == "native" else "" for _ in texts]
                 all_results = list(
-                    self.service.parse_sentence_chunk_native.map(
-                        all_chunks_native, kwargs={"output_format": output_format}
+                    self.service.parse_pretokenized_chunk.map(
+                        all_chunks_r, kwargs={"output_format": output_format}
                     )
                 )
 
-            # Восстанавливаем результаты по текстам
             results, offset = [], 0
             for n_chunks in chunks_per_text:
                 results.append(
                     self._merge_chunks(
-                        all_results[offset : offset + n_chunks], output_format
+                        all_results[offset: offset + n_chunks], output_format
                     )
                 )
                 offset += n_chunks
             return results
+
         except Exception as exc:
             self.logger.error(f"❌ Error during batch Koziev parsing: {exc}")
             raise
@@ -285,22 +316,13 @@ def _print_token(tok: Dict[str, Any]) -> None:
 
 
 def _print_conllu(conllu: str) -> None:
-    # print(f"\n# text = {text}")
-    # print(CONLLU_HEADER)
+    """Выводит CoNLL-U — CONLLU_HEADER вшит внутри каждого блока предложения."""
     print(conllu)
 
 
-# ─── __main__: тест через wrapper (с chunking) ───────────────────────────────
+# ─── __main__: тесты через wrapper (с chunking) ──────────────────────────────
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Koziev wrapper тест")
-    ap.add_argument(
-        "--tokenizer", choices=["native", "razdel"], default="native",
-        help="Путь сентенизации: native (без офсетов) или razdel (с офсетами)",
-    )
-    ap.add_argument(
-        "--output-format", choices=["native", "conllu"], default="conllu",
-        dest="output_format", help="Формат вывода (default: conllu)",
-    )
     ap.add_argument(
         "--chunk-size", type=int, default=default_chunk_size, dest="chunk_size",
         help=f"Предложений на чанк (default: {default_chunk_size})",
@@ -326,17 +348,43 @@ if __name__ == "__main__":
         "Москва — столица России. "
         "Кружка-термос стоит 500р."
     )
+    chunk_size = args.chunk_size
 
-    # ── Вариант 1: NATIVE + RAZDEL PATH ──────────────────────────────────────
+    # ── 1. NATIVE tokenizer, NATIVE format ───────────────────────────────────
     print(f"\n{sep}")
-    print("ВАРИАНТ 1: NATIVE + RAZDEL PATH (с символьными офсетами)")
+    print("1. NATIVE tokenizer — NATIVE format (rutokenizer в Modal, без офсетов)")
     print(sep)
-    result_nr = wrapper.parse_text(
-        text_single, output_format="native", tokenizer="razdel",
-        chunk_size=args.chunk_size,
+    result = wrapper.parse_text(
+        text_single, output_format="native", tokenizer="native",
+        chunk_size=chunk_size,
     )
     print(f"\nТекст: '{text_single}'")
-    for sentence in result_nr:
+    for sentence in result:
+        print(f"\nПредложение: '{sentence['text']}' (start_char={sentence['start_char']})")
+        for token in sentence["words"]:
+            _print_token(token)
+
+    # ── 2. NATIVE tokenizer, CONLL-U format ──────────────────────────────────
+    print(f"\n{sep}")
+    print("2. NATIVE tokenizer — CoNLL-U format")
+    print(sep)
+    _print_conllu(
+        wrapper.parse_text(
+            text_multi, output_format="conllu", tokenizer="native",
+            chunk_size=chunk_size,
+        )
+    )
+
+    # ── 3. RAZDEL tokenizer, NATIVE format ───────────────────────────────────
+    print(f"\n{sep}")
+    print("3. RAZDEL tokenizer — NATIVE format (razdel.tokenize локально, с офсетами)")
+    print(sep)
+    result_r = wrapper.parse_text(
+        text_single, output_format="native", tokenizer="razdel",
+        chunk_size=chunk_size,
+    )
+    print(f"\nТекст: '{text_single}'")
+    for sentence in result_r:
         print(
             f"\nПредложение: '{sentence['text']}' "
             f"(start_char={sentence['start_char']})"
@@ -344,58 +392,67 @@ if __name__ == "__main__":
         for token in sentence["words"]:
             _print_token(token)
 
-    # ── Вариант 2: NATIVE + NATIVE PATH ──────────────────────────────────────
+    # ── 4. RAZDEL tokenizer, CONLL-U format ──────────────────────────────────
     print(f"\n{sep}")
-    print("ВАРИАНТ 2: NATIVE + NATIVE PATH (без символьных офсетов)")
+    print("4. RAZDEL tokenizer — CoNLL-U format")
     print(sep)
-    result_nn = wrapper.parse_text(
-        text_single, output_format="native", tokenizer="native",
-        chunk_size=args.chunk_size,
-    )
-    print(f"\n⚡ Сравнение путей для: '{text_single}'")
-    print(f"  razdel: {[w['form'] for s in result_nr for w in s['words']]}")
-    print(f"  native: {[w['form'] for s in result_nn for w in s['words']]}")
-    for sentence in result_nn:
-        print(f"\nПредложение: '{sentence['text']}'")
-        for token in sentence["words"]:
-            _print_token(token)
-
-    # ── Вариант 3: CONLL-U + RAZDEL ──────────────────────────────────────────
-    print(f"\n{sep}")
-    print("ВАРИАНТ 3: CONLL-U + RAZDEL PATH")
-    print(sep)
-    # print(CONLLU_HEADER)
     _print_conllu(
         wrapper.parse_text(
             text_multi, output_format="conllu", tokenizer="razdel",
-            chunk_size=args.chunk_size,
-        ),
+            chunk_size=chunk_size,
+        )
     )
 
-    # ── Вариант 4: CONLL-U + NATIVE ──────────────────────────────────────────
+    # ── 5. Сравнение: native vs razdel tokenizer ──────────────────────────────
     print(f"\n{sep}")
-    print("ВАРИАНТ 4: CONLL-U + NATIVE PATH")
+    print("5. СРАВНЕНИЕ токенизаторов (native vs razdel) — NATIVE format")
     print(sep)
-    # print(CONLLU_HEADER)
-    _print_conllu(
-        wrapper.parse_text(
-            text_multi, output_format="conllu", tokenizer="native",
-            chunk_size=args.chunk_size,
-        ),
+    result_n = wrapper.parse_text(
+        text_multi, output_format="native", tokenizer="native",
+        chunk_size=chunk_size,
     )
+    result_r = wrapper.parse_text(
+        text_multi, output_format="native", tokenizer="razdel",
+        chunk_size=chunk_size,
+    )
+    print(f"\nТекст: '{text_multi}'")
+    for sn, sr in zip(result_n, result_r):
+        n_forms = [w["form"] for w in sn["words"]]
+        r_forms = [w["form"] for w in sr["words"]]
+        print(f"\n  Предложение: '{sn['text']}'")
+        print(f"    native (rutokenizer): {n_forms}")
+        print(f"    razdel (razdel.tok):  {r_forms}")
+        if n_forms != r_forms:
+            print(f"    ⚠️  Токенизация различается!")
+        else:
+            print(f"    ✓  Токенизация совпадает")
 
-    # ── parse_batch ───────────────────────────────────────────────────────────
+    # ── 6. parse_batch, NATIVE tokenizer ──────────────────────────────────────
     print(f"\n{sep}")
-    print("BATCH: CONLL-U + RAZDEL (2 текста)")
+    print("6. BATCH (2 текста) — NATIVE tokenizer, CoNLL-U")
     print(sep)
-    batch_texts = [text_single, "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."]
+    batch_texts = [
+        text_single,
+        "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься.",
+    ]
     batch_results = wrapper.parse_batch(
-        batch_texts, output_format="conllu", tokenizer="razdel",
-        chunk_size=args.chunk_size,
+        batch_texts, output_format="conllu", tokenizer="native",
+        chunk_size=chunk_size,
     )
-    for idx, (batch_text, batch_res) in enumerate(zip(batch_texts, batch_results), 1):
-        print(f"\n── Текст {idx}: '{batch_text}'")
-        # print(CONLLU_HEADER)
-        _print_conllu(batch_res)
+    for idx, (bt, br) in enumerate(zip(batch_texts, batch_results), 1):
+        print(f"\n── Текст {idx}: '{bt}'")
+        _print_conllu(br)
+
+    # ── 7. parse_batch, RAZDEL tokenizer ──────────────────────────────────────
+    print(f"\n{sep}")
+    print("7. BATCH (2 текста) — RAZDEL tokenizer, CoNLL-U")
+    print(sep)
+    batch_results_r = wrapper.parse_batch(
+        batch_texts, output_format="conllu", tokenizer="razdel",
+        chunk_size=chunk_size,
+    )
+    for idx, (bt, br) in enumerate(zip(batch_texts, batch_results_r), 1):
+        print(f"\n── Текст {idx}: '{bt}'")
+        _print_conllu(br)
 
     print(f"\n{'✅ ВСЕ ТЕСТЫ ЗАВЕРШЕНЫ':^72}")
