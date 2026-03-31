@@ -462,6 +462,7 @@ _CONLLU_HEADER = (
     f"{'DEPREL':<12} {'DEPS':<6}  MISC"
 )
 
+# noinspection DuplicatedCode
 def _print_sentence_table(
     sent_idx: int,
     tokens: List[Dict[str, Any]],
@@ -500,7 +501,7 @@ def _print_sentence_table(
         if tok["feats"] != "_":
             print(f"        ↳ feats: {tok['feats']}")
 
-
+# noinspection DuplicatedCode
 def _print_token_full(tok: Dict[str, Any]) -> None:
     """
     Выводит все 10 CoNLL-U полей токена в подробном вертикальном формате.

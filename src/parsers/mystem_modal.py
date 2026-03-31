@@ -154,57 +154,6 @@ class MystemService:
 
         return results
 
-    # @staticmethod
-    # def _merge_punct(razdel_tokens, mystem_tokens, output_format: str):
-    #     """
-    #     Вставляет пунктуационные токены (от razdel) обратно в список
-    #     токенов mystem на правильные позиции, перенумеровывая ID.
-    #     """
-    #     merged = []
-    #     m_iter = iter(mystem_tokens)
-    #     token_id = 1
-    #
-    #     for rt in razdel_tokens:
-    #         text = rt.text
-    #         if not text.strip():
-    #             continue  # пробелы пропускаем
-    #
-    #         is_punct = all(ch in PUNCT_CHARS for ch in text)
-    #
-    #         if is_punct:
-    #             # Пунктуационный токен — все поля прочерк
-    #             if output_format == "conllu":
-    #                 merged.append({
-    #                     "id":     token_id,
-    #                     "form":   text,
-    #                     "lemma":  text,        # лемма = сам знак (CoNLL-U конвенция)
-    #                     "upos":   "PUNCT",
-    #                     "xpos":   "_",
-    #                     "feats":  "_",
-    #                     "head":   "_",
-    #                     "deprel": "_",
-    #                     "deps":   "_",
-    #                     "misc":   "_",
-    #                 })
-    #             else:  # native
-    #                 merged.append({
-    #                     "id":       token_id,
-    #                     "text":     text,
-    #                     "upos":     "PUNCT",
-    #                     "analysis": [],
-    #                     "is_punct": True,
-    #                 })
-    #         else:
-    #             # Словный токен — берём из mystem
-    #             mt = next(m_iter, None)
-    #             if mt is None:
-    #                 break
-    #             mt["id"] = token_id
-    #             merged.append(mt)
-    #
-    #         token_id += 1
-    #
-    #     return merged
 
     # ------------------------------------------------------------------ #
     #  Обработка сырого вывода mystem.analyze                             #
@@ -244,6 +193,7 @@ class MystemService:
             })
         return tokens
 
+    # noinspection DuplicatedCode
     @staticmethod
     def _process_simplified(analysis: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -314,6 +264,7 @@ class MystemService:
 #  Local entrypoint                                                    #
 # ------------------------------------------------------------------ #
 
+# noinspection DuplicatedCode
 @app.local_entrypoint()
 def main():
     service = MystemService()
@@ -448,6 +399,7 @@ def main():
                   f"{te['upos']:^10}  {ti['upos']:^10}  "
                   f"form={form_match} upos={upos_match}")
 
+# noinspection DuplicatedCode
 def _print_conllu(input_texts: list, results: list) -> None:
     """
     Выводит CoNLL-U таблицу для списка предложений.

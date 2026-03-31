@@ -127,6 +127,7 @@ class CobaldParser:
             self.logger.error(f"❌ Ошибка при разборе текста (упал чанк, всего {len(chunks)}): {e}")
             raise
 
+    # noinspection DuplicatedCode
     def parse_batch(
             self,
             texts: List[str],
@@ -165,9 +166,6 @@ class CobaldParser:
         if not all_chunks:
             return [[] for _ in texts]
 
-
-
-
         try:
             # Один .map() → Modal параллелит все чанки
             all_results = list(
@@ -195,6 +193,7 @@ class CobaldParser:
 
 
 # ─────────────────────── ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ─────────────────────────────
+# noinspection DuplicatedCode
 def _dep_tuple_to_str(dep: Any) -> str:
     """
     Конвертирует deps_ud / deps_eud в строку CoNLL-U формата head:deprel.
@@ -304,89 +303,6 @@ def _print_sentence_table(sentence: List[Dict]) -> None:
 
 # ─────────────────────────────── ТЕСТЫ ───────────────────────────────────────
 
-# if __name__ == "__main__":
-#     logging.basicConfig(
-#         level=logging.INFO,
-#         format="%(asctime)s %(levelname)s %(message)s",
-#     )
-#
-#     SEP = "=" * 70
-#
-#     # ── Проверка доступности сервиса ─────────────────────────────────────────
-#     print(f"{SEP}\nПРОВЕРКА MODAL-СЕРВИСА\n{SEP}")
-#     try:
-#         parser = CobaldParser()
-#     except Exception as e:
-#         print(f"⚠️ Modal-сервис недоступен: {e}")
-#         print("Запустите: modal deploy src/parsers/cobald_modal.py")
-#         sys.exit(1)
-#
-#     test_text  = "Зло, которым ты меня пугаешь, вовсе не так зло, как ты зло ухмыляешься."
-#     test_batch = ["Он думал о море.", "Кот лежал на диване."]
-#
-#     # ── 1. dict-формат ───────────────────────────────────────────────────────
-#     print(f"\n{SEP}\nФОРМАТ: dict\n{SEP}")
-#     result_dict = parser.parse_text(test_text, output_format="dict")
-#     print(f"Текст: '{test_text}'")
-#     print(f"Предложений: {len(result_dict)}\n")
-#     for s_idx, sent in enumerate(result_dict, 1):
-#         print(f"  Предложение {s_idx} ({len(sent)} токенов):")
-#         _print_sentence_table(sent)
-#         print()
-#
-#     if result_dict and result_dict[0]:
-#         tok0 = result_dict[0][0]
-#         print(f"  Ключи токена : {list(tok0.keys())}")
-#         print(f"  Тип id       : {type(tok0['id']).__name__}  (ожидается int)")
-#         print(f"\n  CoBaLD-поля первого токена:")
-#         print(f"    misc      : {tok0.get('misc', '—')}")
-#         print(f"    deepslot  : {tok0.get('deepslot', '—')}")
-#         print(f"    semclass  : {tok0.get('semclass', '—')}")
-#
-#     # ── 2. native-формат ─────────────────────────────────────────────────────
-#     print(f"\n{SEP}\nФОРМАТ: native\n{SEP}")
-#     result_native = parser.parse_text(test_text, output_format="native")
-#     print(f"Предложений: {len(result_native)}\n")
-#     for s_idx, sent in enumerate(result_native, 1):
-#         print(f"  Предложение {s_idx} ({len(sent)} токенов):")
-#         _print_sentence_table(sent)
-#         if sent:
-#             extra_keys = [k for k in sent[0]
-#                           if k not in ("id", "form", "head", "deprel",
-#                                        "misc", "deepslot", "semclass")]
-#             if extra_keys:
-#                 print(f"  Доп. поля native: {extra_keys}")
-#         print()
-#
-#     # ── 3. CoNLL-U формат (из native) ────────────────────────────────────────
-#     # ДОБАВЛЕНО: вывод в стандартном CoNLL-U формате.
-#     # Данные берутся из result_native — только он содержит lemma/upos/feats/eud.
-#     # CoBaLD-специфичные поля (deepslot, semclass) добавляются в MISC-колонку.
-#     print(f"\n{SEP}\nФОРМАТ: CoNLL-U (из native)\n{SEP}")
-#     conllu_str = _to_conllu_str(result_native)
-#     print(conllu_str)
-#
-#     # ── 4. Проверка типа возврата ─────────────────────────────────────────────
-#     print(f"\n{SEP}\nПРОВЕРКА ТИПА ВОЗВРАТА\n{SEP}")
-#     for fmt in ("dict", "native"):
-#         r = parser.parse_text("Тест.", output_format=fmt)
-#         status = "✅" if r is not None else "❌ None!"
-#         print(f"  parse_text(format={fmt!r})"
-#               f" → type={type(r).__name__}"
-#               f" is_none={r is None}"
-#               f" {status}")
-#
-#     # ── 5. Пакетная обработка ─────────────────────────────────────────────────
-#     print(f"\n{SEP}\nПАКЕТНАЯ ОБРАБОТКА\n{SEP}")
-#     result_batch = parser.parse_batch(test_batch, output_format="dict")
-#     print(f"Текстов: {len(test_batch)}, результатов: {len(result_batch)}\n")
-#     for t_idx, text_sents in enumerate(result_batch):
-#         total = sum(len(s) for s in text_sents)
-#         print(f"  [{t_idx}] '{test_batch[t_idx]}'"
-#               f" → {len(text_sents)} предл., {total} токенов")
-#
-#     print(f"\n{SEP}\n✅ Все тесты завершены\n{SEP}")
-
 if __name__ == "__main__":
     import argparse
     logging.basicConfig(
@@ -400,6 +316,8 @@ if __name__ == "__main__":
     ap.add_argument("--chunk-size", type=int,
                     default=CobaldParser.SENTENCE_CHUNK_SIZE, dest="chunk_size")
 
+
+    # noinspection DuplicatedCode
     def _run_tests(args) -> None:
         """
         Тест-секции:
@@ -556,6 +474,7 @@ if __name__ == "__main__":
         try:
             r1  = parser.parse_text(multi_sample, output_format="dict", chunk_size=1)
             r32 = parser.parse_text(multi_sample, output_format="dict", chunk_size=32)
+
             assert len(r1) == len(r32), f"len: chunk=1→{len(r1)}, chunk=32→{len(r32)}"
             for s1, s32 in zip(r1, r32):
                 f1  = [t["form"] for t in s1]

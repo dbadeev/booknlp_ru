@@ -33,7 +33,7 @@ app    = modal.App("booknlp-ru-cobald")
 # CoNLL-U утилиты (используются внутри сервиса для output_format='conllu').
 # Зеркало на стороне клиента: cobald_wrapper.py :: _to_conllu_str
 # ──────────────────────────────────────────────────────────────────────────
-
+# noinspection DuplicatedCode
 def _dep_tuple_to_str(dep: Any) -> str:
     """
     Конвертирует deps_eud в строку CoNLL-U формата head:deprel.
@@ -502,46 +502,7 @@ class CobaldService:
 
 
 # ─────────────────────── LOCAL ENTRYPOINT ────────────────────
-# @app.local_entrypoint()
-# def main():
-#     """Тестирование CoBaLD сервиса (4 комбинации)."""
-#     test_single = "Мама мыла раму. Папа читал газету."
-#     test_batch  = ["Он думал о море.", "Кот лежал на диване."]
-#
-#     sep = "=" * 70
-#     print(f"{sep}\nТЕСТИРОВАНИЕ COBALD SERVICE\n{sep}")
-#
-#     service = CobaldService()
-#
-#     # 1. parse → dict
-#     print("\n1. parse (dict):")
-#     result = service.parse.remote(test_single, output_format="dict")
-#     print(f"   Предложений: {len(result)}")
-#     for s_idx, sent in enumerate(result, 1):
-#         forms = [t["form"] for t in sent]
-#         print(f"   [{s_idx}] {forms}")
-#         for tok in sent:
-#             print(f"       id={tok['id']} head={tok['head']} "
-#                   f"deprel={tok['deprel']:<12} "
-#                   f"deepslot={tok['deepslot']} semclass={tok['semclass']}")
-#
-#     # 2. parse → native
-#     print("\n2. parse (native):")
-#     result = service.parse.remote(test_single, output_format="native")
-#     print(f"   Предложений: {len(result)}")
-#     for s_idx, sent in enumerate(result, 1):
-#         print(f"   [{s_idx}] ключи токена: {list(sent[0].keys()) if sent else '—'}")
-#
-#     # 3. parse_batch → dict
-#     print("\n3. parse_batch (dict):")
-#     result = service.parse_batch.remote(test_batch, output_format="dict")
-#     for t_idx, text_sents in enumerate(result):
-#         total = sum(len(s) for s in text_sents)
-#         print(f"   [{t_idx}] '{test_batch[t_idx]}' "
-#               f"→ {len(text_sents)} предл., {total} токенов")
-#
-#     print(f"\n{'=' * 70}\n✅ Тестирование завершено\n{'=' * 70}")
-
+# noinspection DuplicatedCode
 @app.local_entrypoint()
 def main():
     """

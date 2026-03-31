@@ -58,6 +58,7 @@ from razdel import sentenize
 # ─── Типы ─────────────────────────────────────────────────────────────────────
 _T = TypeVar("_T")
 
+# noinspection DuplicatedCode
 OutputFormat  = Literal["simplified", "native"]
 TokenizerType = Literal["razdel", "native"]
 
@@ -144,7 +145,7 @@ class TrankitParser:
             raise
 
     # ─── Chunking ─────────────────────────────────────────────────────────────
-
+    # noinspection DuplicatedCode
     @staticmethod
     def _split_to_chunks(
         text: str,
@@ -183,6 +184,7 @@ class TrankitParser:
             for i in range(0, len(sentences), chunk_size)
         ]
 
+    # noinspection DuplicatedCode
     @staticmethod
     def _split_to_sentence_chunks(
         text: str,
@@ -248,6 +250,7 @@ class TrankitParser:
             chunk_size: int = ...,
     ) -> List[List[TokenDictNative]]: ...
 
+    # noinspection DuplicatedCode
     def parse_text(
             self,
             text: str,
@@ -338,6 +341,7 @@ class TrankitParser:
     ) -> List[List[List[TokenDictNative]]]:
         ...
 
+    # noinspection DuplicatedCode
     def parse_batch(
             self,
             texts: List[str],
@@ -439,7 +443,7 @@ class TrankitParser:
 
 
 # ─── Вспомогательные функции вывода ──────────────────────────────────────────
-
+# noinspection DuplicatedCode
 def _print_simplified(result: List[List[Any]], title: str = "") -> None:
     """Выводит результат в simplified (CoNLL-U) формате."""
     if title:
@@ -464,7 +468,7 @@ def _print_simplified(result: List[List[Any]], title: str = "") -> None:
             if t.get("feats", "_") not in ("_", "", None):
                 print(f"       feats: {t['feats']}")
 
-
+# noinspection DuplicatedCode
 def _print_native(result: List[List[Any]], title: str = "") -> None:
     """Выводит результат в native-формате (все поля Trankit)."""
     if title:
@@ -496,6 +500,7 @@ def _print_native(result: List[List[Any]], title: str = "") -> None:
 # ─── __main__: тест через wrapper (с chunking) ───────────────────────────────
 
 if __name__ == "__main__":
+    # noinspection DuplicatedCode
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -574,6 +579,7 @@ if __name__ == "__main__":
         print(f"  {ok} dspan[0]={t0['dspan'][0]}, span[0]={t0['span'][0]}, text='{t0['text']}'")
 
     # ── Вариант 3: simplified + native ───────────────────────────────────────
+    # noinspection DuplicatedCode
     print(f"\n{sep}")
     print("ВАРИАНТ 3: simplified + native (sentence-local офсеты)")
     print(sep)
@@ -633,6 +639,7 @@ if __name__ == "__main__":
             )
 
     # ── parse_batch ───────────────────────────────────────────────────────────
+    # noinspection DuplicatedCode
     print(f"\n{sep}")
     print("BATCH: simplified + razdel (2 текста)")
     print(sep)

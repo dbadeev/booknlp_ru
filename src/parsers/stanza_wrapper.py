@@ -351,6 +351,8 @@ if __name__ == "__main__":
                     print(_CONLLU_HEADER)
             print()
 
+
+    # noinspection DuplicatedCode
     def _print_native(results: list) -> None:
         """Выводит ВСЕ нативные поля каждого токена с подписями."""
         for sent in results:

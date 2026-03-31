@@ -178,6 +178,7 @@ class KozievService:
 
         Args:
             sentences_with_offsets: List[(sentence_text, start_char)]
+            output_format: Формат вывода — 'native' | 'conllu'
         """
         native_results: List[Dict[str, Any]] = []
         conllu_blocks: List[str] = []
@@ -211,6 +212,7 @@ class KozievService:
 
         Args:
             sentences: List[str]
+            output_format: Формат вывода — 'native' | 'conllu'
         """
         native_results: List[Dict[str, Any]] = []
         conllu_blocks: List[str] = []
@@ -247,6 +249,7 @@ class KozievService:
                 sent_text  — исходный текст предложения (для # text = ...)
                 tokens     — токены от razdel.tokenize(sent_text)
                 start_char — символьный офсет начала предложения в документе
+            output_format: Формат вывода — 'native' | 'conllu'
         """
         native_results: List[Dict[str, Any]] = []
         conllu_blocks: List[str] = []
@@ -280,6 +283,7 @@ class KozievService:
 
         Args:
             sentences: List[(sent_text, tokens)]
+            output_format: Формат вывода — 'native' | 'conllu'
         """
         native_results: List[Dict[str, Any]] = []
         conllu_blocks: List[str] = []

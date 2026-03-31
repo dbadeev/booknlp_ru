@@ -39,7 +39,7 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 import modal
 
 # ─── Константы ────────────────────────────────────────────────────────────────
-
+# noinspection DuplicatedCode
 LOCAL_MODEL_PATH = "/root/local_models/xlm-roberta-large"
 LANG = "russian"
 TITLE = "xlm-roberta-large"
@@ -108,6 +108,7 @@ class TrankitService:
     logger: logging.Logger
     nlp: Any
 
+    # noinspection DuplicatedCode
     @modal.enter()
     def setup(self):
         import trankit
@@ -146,6 +147,7 @@ class TrankitService:
 
     # ─── Вспомогательные методы форматирования ───────────────────────────────
 
+    # noinspection DuplicatedCode
     @staticmethod
     def _extract_span(token: dict) -> Tuple[int, int]:
         """
@@ -166,6 +168,7 @@ class TrankitService:
                 return int(val[0]), int(val[1])
         return 0, 0
 
+    # noinspection DuplicatedCode
     @staticmethod
     def _process_simplified(
             doc: dict,
@@ -262,6 +265,7 @@ class TrankitService:
                 result.append(sent_tokens)
         return result
 
+    # noinspection DuplicatedCode
     @staticmethod
     def _process_native(
             doc: dict,
@@ -536,7 +540,7 @@ class TrankitService:
         return result
 
     # ─── Backward compat / local_entrypoint ──────────────────────────────────
-
+    # noinspection DuplicatedCode
     def _parse_text_internal(
         self, text: str, output_format: str = "simplified"
     ) -> List[List[Dict[str, Any]]]:
@@ -580,7 +584,7 @@ class TrankitService:
 
 
 # ─── local_entrypoint: прямое тестирование Modal-сервиса ─────────────────────
-
+# noinspection DuplicatedCode
 @app.local_entrypoint()
 def main():
     """

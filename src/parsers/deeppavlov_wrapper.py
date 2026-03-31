@@ -138,7 +138,7 @@ class DeepPavlovParser:
     # razdel:  sentenize → _split_to_chunks         → .map(parse_sentence_chunk)
     # native:  sentenize → _split_to_sentence_chunks → .map(parse_sentence_chunk_native)
     # Обе ветки используют .map() с единственным различием — razdel несёт символьные офсеты, native — нет.
-
+    # noinspection DuplicatedCode
     def parse_text(
         self,
         text: str,
@@ -320,6 +320,7 @@ if __name__ == "__main__":
             print(f"📊 ВАРИАНТ 1: STANDARD (dict)")
             print(f"{'═'*70}")
 
+            # noinspection DuplicatedCode
             result_dict = parser.parse_text(test_text, output_format='dict')
             sentences = result_dict
             print(f"\nReceived {len(sentences)} sentence(s)")
@@ -369,6 +370,7 @@ if __name__ == "__main__":
             if result_full['sentences']:
                 first_sent = result_full['sentences'][0]
                 for tok_idx, token in enumerate(first_sent, 1):
+                    # noinspection DuplicatedCode
                     print(f"\n  [{tok_idx}] {token['form']}")
                     print(f"      {'─'*62}")
                     print(f"      ID: {token['id']}")
@@ -478,6 +480,7 @@ if __name__ == "__main__":
                 print(f"{'═'*70}")
 
                 for tok_idx, token in enumerate(sent, 1):
+                    # noinspection DuplicatedCode
                     print(f"\n  [{tok_idx}] {token['form']}")
                     print(f"      {'─'*62}")
                     print(f"      ID: {token['id']}")
@@ -494,6 +497,7 @@ if __name__ == "__main__":
                     heads_p = token.get('heads_proba', [])
                     if heads_p:
                         print(f"\n      Heads probabilities (TOP-5):")
+                        # noinspection DuplicatedCode
                         heads_enum = [(i, p) for i, p in enumerate(heads_p)]
                         heads_enum.sort(key=lambda x: -x[1])
 
@@ -511,6 +515,7 @@ if __name__ == "__main__":
                             bar = '█' * int(prob * 20)
                             print(f"        [{head_idx:2d}] {head_label:20s} {prob:.4f} {bar}{marker}")
 
+                    # noinspection DuplicatedCode
                     deps_p = token.get('deps_proba', {})
                     if deps_p:
                         print(f"\n      Dependency relation probabilities (TOP-5):")
@@ -522,6 +527,7 @@ if __name__ == "__main__":
                             print(f"        {deprel:12s} {prob:.4f} {bar}{marker}")
 
         else:  # 'dict'
+            # noinspection DuplicatedCode
             result = parser.parse_text(test_text, output_format='dict')
             sentences = result
             print(f"\nReceived {len(sentences)} sentence(s)")

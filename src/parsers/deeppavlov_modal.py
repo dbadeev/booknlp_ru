@@ -174,6 +174,7 @@ class DeepPavlovService:
 
         print("\n✅ Ready\n")
 
+    # noinspection DuplicatedCode
     @staticmethod
     def _format_conllu_output(sentences: List[List[Dict]]) -> str:
         conllu_blocks = []

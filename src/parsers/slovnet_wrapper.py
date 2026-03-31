@@ -40,6 +40,7 @@ class SlovnetParser:
         )
 
         # ── Разбивка текста на чанки предложений ──────────────────────────
+    # noinspection DuplicatedCode
     @staticmethod
     def _split_to_chunks(
             text: str,
@@ -75,6 +76,7 @@ class SlovnetParser:
         }
 
     # ── Публичный API ─────────────────────────────────────────────────
+    # noinspection DuplicatedCode
     def parse_text(
         self,
         text: str,
@@ -190,6 +192,7 @@ if __name__ == "__main__":
     # ════════════════════════════════════════════
     # 3. Сравнение ключей и feats
     # ════════════════════════════════════════════
+    # noinspection DuplicatedCode
     print(f"\n{sep}\nСРАВНЕНИЕ КЛЮЧЕЙ И ФОРМАТА FEATS\n{sep}")
     ck = set(result_conllu[0][0].keys())
     nk = set(sentences[0][0].keys())  # ← было tokens[0]

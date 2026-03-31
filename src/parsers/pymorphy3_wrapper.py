@@ -67,7 +67,7 @@ class Pymorphy3Parser:
             raise
 
     # ─── Chunking ─────────────────────────────────────────────────────────────
-
+    # noinspection DuplicatedCode
     @staticmethod
     def split_to_chunks(
         text: str,
@@ -250,6 +250,7 @@ if __name__ == "__main__":
     ap.add_argument("--chunk-size",    type=int, default=default_chunk_size, dest="chunk_size")
 
 
+    # noinspection DuplicatedCode
     def _run_tests(args) -> None:
         """
         Тестирует Pymorphy3Parser (wrapper + Modal).
@@ -292,6 +293,7 @@ if __name__ == "__main__":
                     str(token["head"]), token["deprel"],
                 ]))
 
+        # noinspection DuplicatedCode
         def print_native(sentence) -> None:
             for token in sentence:
                 print(f"ID: {token['id']}")
@@ -306,6 +308,7 @@ if __name__ == "__main__":
                 print()
 
         # ── Служебные ─────────────────────────────────────────────────────────
+        # noinspection DuplicatedCode
         sep = "=" * 72
         passed = 0
         failed = 0

@@ -35,7 +35,7 @@ app = modal.App("booknlp-ru-pymorphy3")
 OutputFormat = Literal["simplified", "native"]
 
 # ─── Константы (перенесены из wrapper) ───────────────────────────────────────
-
+# noinspection DuplicatedCode
 _OPENCORPORA_TO_UPOS: Dict[str, str] = {
     "NOUN": "NOUN", "ADJF": "ADJ",  "ADJS": "ADJ",
     "COMP": "ADJ",  "VERB": "VERB", "INFN": "VERB",
@@ -113,7 +113,7 @@ class Pymorphy3Service:
         self.logger.info("Pymorphy3Service initialized!")
 
     # ─── Internal helpers ─────────────────────────────────────────────────────
-
+    # noinspection DuplicatedCode
     def _parse_tokens_simplified(self, tokens: List[str]) -> List[Dict[str, Any]]:
         """
         Разбирает список токенов → упрощённый CoNLL-U-подобный формат.
@@ -195,7 +195,7 @@ class Pymorphy3Service:
         return sent
 
     # ─── Production methods (called from wrapper) ─────────────────────────────
-
+    # noinspection DuplicatedCode
     @modal.method()
     def parse_sentence_chunk(
         self,
@@ -230,6 +230,7 @@ class Pymorphy3Service:
                 result.append(parse_fn(tokens))
         return result
 
+    # noinspection DuplicatedCode
     @modal.method()
     def parse_sentence_chunk_native(
         self,
@@ -262,7 +263,7 @@ class Pymorphy3Service:
         return result
 
     # ─── Backward compat ──────────────────────────────────────────────────────
-
+    # noinspection DuplicatedCode
     @modal.method()
     def parse(
         self,
@@ -327,6 +328,7 @@ def main():
             ]
             print("\t".join(fields))
 
+    # noinspection DuplicatedCode
     def print_native(sentence: List[Dict[str, Any]]) -> None:
         for token in sentence:
             print(f"ID: {token['id']}")
@@ -341,6 +343,7 @@ def main():
             print()
 
     service = Pymorphy3Service()
+    # noinspection DuplicatedCode
     sep = "=" * 72
     passed = 0
     failed = 0

@@ -66,6 +66,7 @@ class SpacyService:
             def __init__(self, vocab):
                 self.vocab = vocab
 
+            # noinspection DuplicatedCode
             def __call__(self, text: str):
                 from spacy.tokens import Doc
                 tokens = list(razdel_tokenize(text))
@@ -78,6 +79,7 @@ class SpacyService:
                 ] + [False]
                 return Doc(self.vocab, words=words, spaces=spaces)
 
+        # noinspection DuplicatedCode
         self.razdel_tokenizer = RazdelTokenizer(self.nlp.vocab)
 
         if "conll_formatter" not in self.nlp.pipe_names:
@@ -121,6 +123,7 @@ class SpacyService:
             doc = pipe(doc)
         return doc
 
+    # noinspection DuplicatedCode
     def _run_pipeline_batch(self, docs: list, batch_size: int) -> list:
         """
         Пакетно прогоняет список Doc через pipeline.
@@ -448,7 +451,7 @@ class SpacyService:
 
 
 # ─── Вспомогательная функция вывода ─────────────────────────────────────────
-
+# noinspection DuplicatedCode
 def _print_token_full(tok: Dict[str, Any]) -> None:
     """Выводит все поля токена в нативном формате spaCy."""
     print(f"\n  ── Токен #{tok['id']}: '{tok['form']}' " + "─" * 30)
@@ -503,7 +506,7 @@ def _print_conllu(text: str, conllu: str) -> None:
     print(conllu)
 
 # ─── local_entrypoint: тест Modal-сервиса напрямую ───────────────────────────
-
+# noinspection DuplicatedCode
 @app.local_entrypoint()
 def main():
     """

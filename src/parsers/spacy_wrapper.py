@@ -116,7 +116,7 @@ class SpacyParser:
             raise
 
     # ─── Chunking ─────────────────────────────────────────────────────────
-
+    # noinspection DuplicatedCode
     @staticmethod
     def _split_to_chunks(
         text: str,
@@ -234,6 +234,7 @@ class SpacyParser:
             self.logger.error(f"❌ Error during spaCy parsing: {exc}")
             raise
 
+    # noinspection DuplicatedCode
     def parse_batch(
         self,
         texts: List[str],
@@ -295,7 +296,7 @@ class SpacyParser:
 
 
 # ─── Вспомогательная функция вывода ─────────────────────────────────────────
-
+# noinspection DuplicatedCode
 def _print_token_full(tok: TokenDict) -> None:
     """Выводит все поля токена в нативном формате spaCy."""
     print(f"\n  ── Токен #{tok['id']}: '{tok['form']}' " + "─" * 30)

@@ -110,7 +110,7 @@ class MystemParser:
             raise
 
     # ─── Chunking ─────────────────────────────────────────────────────────────
-
+    # noinspection DuplicatedCode
     @staticmethod
     def _split_to_sentence_chunks(
         text: str,
@@ -341,6 +341,7 @@ class MystemParser:
             raise
 
 # ─── Вспомогательные функции вывода ──────────────────────────────────────────
+# noinspection DuplicatedCode
 def _print_conllu(input_texts: list, results: list) -> None:
     """
     Выводит результат в conllu-формате по образцу trankit_wrapper.
@@ -364,6 +365,7 @@ def _print_conllu(input_texts: list, results: list) -> None:
             if misc != "_":
                 print(f"         misc: {misc}")
 
+# noinspection DuplicatedCode
 def _print_native(input_texts: list, results: list,
                   label: str = "text (sent to mystem)") -> None:
     """Выводит результат в native-формате (все поля Mystem)."""
@@ -462,29 +464,7 @@ if __name__ == "__main__":
         tokenizer="external",
         batch_size=args.batch_size,
     )
-    # # parse_text (external) возвращает List[Tuple[tokens, input_text]]
-    # for sent_tokens, input_text in zip(ext_native, input_texts_ext):
-    #     print(f"\n  text (sent to mystem): {input_text!r}")
-    #     for tok in sent_tokens:
-    #         variants = tok.get("analysis") or []
-    #         is_punct = tok.get("is_punct", False)
-    #         if is_punct:
-    #             print(f"    [{tok['id']:>2}] {tok['text']!r:12}  PUNCT  (no analysis)")
-    #         else:
-    #             print(f"    [{tok['id']:>2}] {tok['text']!r:12}  upos={tok['upos']}")
-    #             for j, var in enumerate(variants, 1):
-    #                 lex  = var.get("lex", "")
-    #                 gr   = var.get("gr", "")
-    #                 wt   = var.get("wt", "")
-    #                 qual = var.get("qual", "")
-    #                 extra = []
-    #                 if wt   != "": extra.append(f"wt={wt}")
-    #                 if qual != "": extra.append(f"qual={qual}")
-    #                 extra_str = ", ".join(extra)
-    #                 print(
-    #                     f"           {j}: lex={lex!r}  gr={gr!r}"
-    #                     + (f"  [{extra_str}]" if extra_str else "")
-    #                 )
+
     _print_native(input_texts_ext, ext_native)
 
     # ── 2. EXTERNAL (razdel) → CONLLU ────────────────────────────────────────
@@ -511,28 +491,6 @@ if __name__ == "__main__":
         tokenizer="internal",
         batch_size=args.batch_size,
     )
-    # for i, sent_tokens in enumerate(int_native, 1):
-    #     print(f"\n  text: {sentences[i - 1]!r}")
-    #     for tok in sent_tokens:
-    #         variants = tok.get("analysis") or []
-    #         is_punct = tok.get("is_punct", False)
-    #         if is_punct:
-    #             print(f"    [{tok['id']:>2}] {tok['text']!r:12}  PUNCT  (no analysis)")
-    #         else:
-    #             print(f"    [{tok['id']:>2}] {tok['text']!r:12}  upos={tok['upos']}")
-    #             for j, var in enumerate(variants, 1):
-    #                 lex  = var.get("lex", "")
-    #                 gr   = var.get("gr", "")
-    #                 wt   = var.get("wt", "")
-    #                 qual = var.get("qual", "")
-    #                 extra = []
-    #                 if wt   != "": extra.append(f"wt={wt}")
-    #                 if qual != "": extra.append(f"qual={qual}")
-    #                 extra_str = ", ".join(extra)
-    #                 print(
-    #                     f"           {j}: lex={lex!r}  gr={gr!r}"
-    #                     + (f"  [{extra_str}]" if extra_str else "")
-    #                 )
 
     _print_native(sentences, int_native, label="text")
 
@@ -566,6 +524,7 @@ if __name__ == "__main__":
         batch_size=args.batch_size,
     )
 
+    # noinspection DuplicatedCode
     for s_idx, (se, si) in enumerate(zip(ext_cmp, int_cmp), 1):
         print(f"\n  Sentence {s_idx}: {sent_compare[s_idx - 1]!r}")
         match_icon = "✓" if len(se) == len(si) else "✗"
