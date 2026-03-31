@@ -8,7 +8,7 @@ Modal распределяет чанки по контейнерам через
 import logging
 import modal
 from razdel import sentenize                        # ← новый импорт
-from typing import List, Dict, Any, Literal, Union, Tuple
+from typing import List, Dict, Any, Literal, Union, Tuple, overload
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +26,8 @@ class DeepPavlovParser:
             self.logger.info(
                 f"Connected to DeepPavlov via Modal (tokenizer: {tokenizer})."
             )
-        except Exception as e:
-            self.logger.error(f"Failed to connect to Modal app: {e}")
+        except Exception as exc:
+            self.logger.error(f"Failed to connect to Modal app: {exc}")
             raise
 
     # ------------------------------------------------------------------ #
@@ -48,21 +48,21 @@ class DeepPavlovParser:
         if chunk_size <= 0:
             raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
 
-        sentences = list(sentenize(text))
+        sentences_list = list(sentenize(text))
         chunks = []
-        for i in range(0, len(sentences), chunk_size):
+        for i in range(0, len(sentences_list), chunk_size):
             chunk = [
                 (s.text, base_offset + s.start)
-                for s in sentences[i:i + chunk_size]
+                for s in sentences_list[i:i + chunk_size]
             ]
             chunks.append(chunk)
         return chunks
 
     @staticmethod
-    def _format_conllu_local(sentences: List[List[Dict]]) -> str:
+    def _format_conllu_local(sentences_list: List[List[Dict[str, Any]]]) -> str:
         """Локальное форматирование CoNLL-U (зеркало modal._format_conllu_output)."""
         blocks = []
-        for sent in sentences:
+        for sent in sentences_list:
             lines = []
             for t in sent:
                 if '-' in str(t.get('id', '')):
@@ -126,10 +126,10 @@ class DeepPavlovParser:
         """
         if chunk_size <= 0:
             raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
-        sentences = list(sentenize(text))
+        sentences_list = list(sentenize(text))
         return [
-            [s.text for s in sentences[i:i + chunk_size]]
-            for i in range(0, len(sentences), chunk_size)
+            [s.text for s in sentences_list[i:i + chunk_size]]
+            for i in range(0, len(sentences_list), chunk_size)
         ]
 
     # ------------------------------------------------------------------ #
@@ -138,6 +138,20 @@ class DeepPavlovParser:
     # razdel:  sentenize → _split_to_chunks         → .map(parse_sentence_chunk)
     # native:  sentenize → _split_to_sentence_chunks → .map(parse_sentence_chunk_native)
     # Обе ветки используют .map() с единственным различием — razdel несёт символьные офсеты, native — нет.
+    # noinspection DuplicatedCode
+    @overload
+    def parse_text(self, text: str, output_format: Literal['full'], chunk_size: int = 32) -> Dict[str, Any]:
+        ...
+
+    @overload
+    def parse_text(self, text: str, output_format: Literal['conllu'], chunk_size: int = 32) -> str:
+        ...
+
+    @overload
+    def parse_text(self, text: str, output_format: Literal['dict'] = 'dict', chunk_size: int = 32) -> List[
+        List[Dict[str, Any]]]:
+        ...
+
     # noinspection DuplicatedCode
     def parse_text(
         self,
@@ -183,11 +197,11 @@ class DeepPavlovParser:
             internal_format = "dict" if output_format == "conllu" else output_format
 
             if len(chunks) == 1:
-                result = self.service.parse_sentence_chunk.remote(
+                conllu_result = self.service.parse_sentence_chunk.remote(
                     chunks[0], output_format=internal_format
                 )
                 # Оборачиваем в список для _merge_chunks
-                return self._merge_chunks([result], output_format)
+                return self._merge_chunks([conllu_result], output_format)
 
             # Несколько чанков → .map() → Modal распределяет по контейнерам
             chunk_results = list(
@@ -198,8 +212,8 @@ class DeepPavlovParser:
             )
             return self._merge_chunks(chunk_results, output_format)
 
-        except Exception as e:
-            self.logger.error(f"Error during DeepPavlov parsing: {e}")
+        except Exception as exc:
+            self.logger.error(f"Error during DeepPavlov parsing: {exc}")
             raise
 
     def parse_batch(
@@ -282,8 +296,8 @@ class DeepPavlovParser:
 
             return results
 
-        except Exception as e:
-            self.logger.error(f"Error during DeepPavlov batch parsing: {e}")
+        except Exception as exc:
+            self.logger.error(f"Error during DeepPavlov batch parsing: {exc}")
             raise
 
 
