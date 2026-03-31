@@ -13,9 +13,9 @@ Wrapper — тонкий клиент. Три обязанности:
 Два пути (оба используют razdel.sentenize):
 
   tokenizer="native" — слова токенизирует rutokenizer ВНУТРИ Modal:
-      sentenize → List[List[str]]
-      → service.parse_sentence_chunk_native.map(chunks)
-      Офсеты: НЕТ
+#   sentenize → List[List[(text, start_char)]]
+#   → service.parse_sentence_chunk.map(chunks)
+#   Офсеты: ДА
 
   tokenizer="razdel" — слова токенизирует razdel.tokenize ЗДЕСЬ, в wrapper:
       sentenize + tokenize → List[List[(text, tokens, start_char)]]
@@ -68,6 +68,11 @@ class KozievWrapper:
 
     Сентенизация — всегда razdel.sentenize, локально, ДО отправки в Modal.
     Чанки распределяются по контейнерам через .map().
+
+    Известные ограничения rupostagger / rulemma:
+        - PROPN не выделяется: имена собственные получают NOUN (реже ADJ).
+        - Все леммы возвращаются в нижнем регистре, включая имена собственных.
+          Постобработка по upos == "PROPN" невозможна до исправления теггера.
     """
 
     def __init__(self):
@@ -101,26 +106,6 @@ class KozievWrapper:
         sentences = list(sentenize(text))
         return [
             [(s.text, base_offset + s.start) for s in sentences[i: i + chunk_size]]
-            for i in range(0, len(sentences), chunk_size)
-        ]
-
-    @staticmethod
-    def _split_to_sentence_chunks(
-        text: str,
-        chunk_size: int,
-    ) -> List[List[str]]:
-        """
-        Native path: разбивает текст на чанки предложений (только тексты).
-        rutokenizer получит эти тексты и токенизирует слова внутри Modal.
-
-        Returns:
-            List[List[str]]
-        """
-        if chunk_size <= 0:
-            raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
-        sentences = list(sentenize(text))
-        return [
-            [s.text for s in sentences[i: i + chunk_size]]
             for i in range(0, len(sentences), chunk_size)
         ]
 
@@ -231,36 +216,28 @@ class KozievWrapper:
                 if not chunks:
                     return [] if output_format == "native" else ""
                 if len(chunks) == 1:
-                    result = self.service.parse_sentence_chunk.remote(
+                    chunk_results = [self.service.parse_sentence_chunk.remote(
                         chunks[0], output_format=output_format
-                    )
-                    if output_format == "conllu":
-                        result = self._renumber_sent_ids(result)
-                    return result
-                chunk_results = list(
-                    self.service.parse_sentence_chunk.map(
+                    )]
+                else:
+                    chunk_results = list(self.service.parse_sentence_chunk.map(
                         chunks, kwargs={"output_format": output_format}
-                    )
-                )
+                    ))
+                return self._merge_chunks(chunk_results, output_format)
 
             else:  # tokenizer == "razdel"
                 chunks = self._split_to_razdel_chunks(text, chunk_size)
                 if not chunks:
                     return [] if output_format == "native" else ""
                 if len(chunks) == 1:
-                    result = self.service.parse_pretokenized_chunk.remote(
+                    chunk_results = [self.service.parse_sentence_chunk.remote(
                         chunks[0], output_format=output_format
-                    )
-                    if output_format == "conllu":
-                        result = self._renumber_sent_ids(result)
-                    return result
-                chunk_results = list(
-                    self.service.parse_pretokenized_chunk.map(
+                    )]
+                else:
+                    chunk_results = list(self.service.parse_sentence_chunk.map(
                         chunks, kwargs={"output_format": output_format}
-                    )
-                )
-
-            return self._merge_chunks(chunk_results, output_format)
+                    ))
+                return self._merge_chunks(chunk_results, output_format)
 
         except Exception as exc:
             self.logger.error(f"❌ Error during Koziev parsing: {exc}")
