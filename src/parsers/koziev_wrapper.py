@@ -157,6 +157,8 @@ class KozievWrapper:
             if not parts:  # ← явный ранний выход
                 return ""
             merged = "\n\n".join(parts) + "\n"
+            if len(parts) == 1:
+                return merged
             return KozievWrapper._renumber_sent_ids(merged)
         return [sent for cr in chunk_results for sent in cr]
 
@@ -190,10 +192,8 @@ class KozievWrapper:
         Алгоритм:
           1. Разбить текст на предложения (razdel.sentenize).
           2. Сгруппировать в чанки по chunk_size.
-          3. tokenizer="native":
-               только тексты → parse_sentence_chunk_native (rutokenizer в Modal)
-             tokenizer="razdel":
-               тексты + razdel-токены + офсеты → parse_pretokenized_chunk
+          3. tokenizer="native": тексты + офсеты → parse_sentence_chunk
+             tokenizer="razdel": тексты + razdel-токены + офсеты → parse_pretokenized_chunk
           4. Один чанк → .remote(); несколько → .map() (параллельно).
           5. Склеить результаты, перенумеровать sent_id.
 
