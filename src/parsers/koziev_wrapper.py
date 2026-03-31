@@ -230,11 +230,11 @@ class KozievWrapper:
                 if not chunks:
                     return [] if output_format == "native" else ""
                 if len(chunks) == 1:
-                    chunk_results = [self.service.parse_sentence_chunk.remote(
+                    chunk_results = [self.service.parse_pretokenized_chunk.remote(
                         chunks[0], output_format=output_format
                     )]
                 else:
-                    chunk_results = list(self.service.parse_sentence_chunk.map(
+                    chunk_results = list(self.service.parse_pretokenized_chunk.map(
                         chunks, kwargs={"output_format": output_format}
                     ))
                 return self._merge_chunks(chunk_results, output_format)
