@@ -82,6 +82,26 @@ class KozievWrapper:
             raise
 
     # ─── Chunking ─────────────────────────────────────────────────────────────
+    @staticmethod
+    def _split_to_chunks(
+            text: str,
+            chunk_size: int,
+            base_offset: int = 0,
+    ) -> List[List[Tuple[str, int]]]:
+        """
+        Native path: разбивает текст на чанки предложений с символьными офсетами.
+        Офсеты нужны для корректной склейки предложений при обработке большого текста.
+
+        Returns:
+            List[List[(sentence_text, start_char)]]
+        """
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
+        sentences = list(sentenize(text))
+        return [
+            [(s.text, base_offset + s.start) for s in sentences[i: i + chunk_size]]
+            for i in range(0, len(sentences), chunk_size)
+        ]
 
     @staticmethod
     def _split_to_sentence_chunks(
@@ -148,13 +168,17 @@ class KozievWrapper:
         """
         if output_format == "conllu":
             parts = [cr.strip() for cr in chunk_results if cr.strip()]
-            merged = "\n\n".join(parts) + "\n" if parts else ""
+            if not parts:  # ← явный ранний выход
+                return ""
+            merged = "\n\n".join(parts) + "\n"
             return KozievWrapper._renumber_sent_ids(merged)
         return [sent for cr in chunk_results for sent in cr]
 
     @staticmethod
     def _renumber_sent_ids(conllu: str) -> str:
         """Перенумеровывает # sent_id глобально в объединённом CoNLL-U блоке."""
+        if not conllu.strip():  # ← ранний выход для пустого ввода
+            return ""
         counter = 0
         lines = []
         for line in conllu.splitlines():
@@ -201,18 +225,19 @@ class KozievWrapper:
         """
         try:
             if tokenizer == "native":
-                chunks = self._split_to_sentence_chunks(text, chunk_size)
+                # Продакшн-путь: офсеты нужны для корректной склейки в документ
+                chunks = self._split_to_chunks(text, chunk_size)
                 if not chunks:
                     return [] if output_format == "native" else ""
                 if len(chunks) == 1:
-                    result = self.service.parse_sentence_chunk_native.remote(
+                    result = self.service.parse_sentence_chunk.remote(
                         chunks[0], output_format=output_format
                     )
                     if output_format == "conllu":
                         result = self._renumber_sent_ids(result)
                     return result
                 chunk_results = list(
-                    self.service.parse_sentence_chunk_native.map(
+                    self.service.parse_sentence_chunk.map(
                         chunks, kwargs={"output_format": output_format}
                     )
                 )
@@ -264,15 +289,15 @@ class KozievWrapper:
             chunks_per_text: List[int] = []
 
             if tokenizer == "native":
-                all_chunks: List[List[str]] = []
+                all_chunks: List[List[Tuple[str, int]]] = []
                 for text in texts:
-                    text_chunks = self._split_to_sentence_chunks(text, chunk_size)
+                    text_chunks = self._split_to_chunks(text, chunk_size)
                     chunks_per_text.append(len(text_chunks))
                     all_chunks.extend(text_chunks)
                 if not all_chunks:
                     return [[] if output_format == "native" else "" for _ in texts]
                 all_results = list(
-                    self.service.parse_sentence_chunk_native.map(
+                    self.service.parse_sentence_chunk.map(
                         all_chunks, kwargs={"output_format": output_format}
                     )
                 )
