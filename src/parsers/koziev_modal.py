@@ -1,5 +1,4 @@
 import modal
-import logging
 from typing import Any, Dict, List, Literal, Tuple
 
 # ─── Modal image ──────────────────────────────────────────────────────────────
@@ -14,7 +13,7 @@ def _download_models():
     rulemma.Lemmatizer().load()
     print("✓ rulemma загружена.")
 
-
+# noinspection DuplicatedCode
 koziev_image = (
     modal.Image.debian_slim()
     .apt_install("git", "build-essential")
@@ -67,6 +66,7 @@ class KozievService:
         parse  — одиночное предложение (local_entrypoint / прямые вызовы)
     """
 
+    # noinspection DuplicatedCode
     @modal.enter()
     def load_models(self):
         import rutokenizer, rupostagger, rulemma
@@ -106,6 +106,7 @@ class KozievService:
         tags = self.tagger.tag(tokens)
         return self.lemmatizer.lemmatize(tags)
 
+    # noinspection DuplicatedCode
     @staticmethod
     def _parse_pos_tags(pos_tags: str):
         """
@@ -119,6 +120,7 @@ class KozievService:
         feats = "|".join(parts[1:]) if len(parts) > 1 else "_"
         return upos, feats
 
+    # noinspection DuplicatedCode
     @staticmethod
     def _lemmas_to_native(
         sent_text: str,
@@ -137,6 +139,7 @@ class KozievService:
             })
         return {"text": sent_text, "start_char": char_offset, "words": words}
 
+    # noinspection DuplicatedCode
     @staticmethod
     def _lemmas_to_conllu(sent_text: str, lemmas, sent_id: int = 1) -> str:
         """
@@ -311,6 +314,7 @@ class KozievService:
 
 
 # ─── Вспомогательные функции вывода ───────────────────────────────────────────
+# noinspection DuplicatedCode
 def _print_token(tok: Dict[str, Any]) -> None:
     print(f"\n  ── Токен #{tok['id']}: '{tok['form']}' " + "─" * 30)
     print(f"     form:  {tok['form']}")
@@ -346,6 +350,7 @@ def main():
     # ── 1. parse_sentence_chunk — NATIVE, с офсетами, NATIVE format ───────────
     print(f"\n{sep}")
     print("1. parse_sentence_chunk — NATIVE tokenizer, с офсетами, NATIVE format")
+    # noinspection DuplicatedCode
     print(sep)
     sents = list(sentenize(text_multi))
     chunk = [(s.text, s.start) for s in sents]
@@ -366,6 +371,7 @@ def main():
     # ── 3. parse_sentence_chunk_native — NATIVE, без офсетов, NATIVE format ───
     print(f"\n{sep}")
     print("3. parse_sentence_chunk_native — NATIVE tokenizer, без офсетов, NATIVE")
+    # noinspection DuplicatedCode
     print(sep)
     chunk_texts = [s.text for s in sents]
     print(f"Чанк ({len(chunk_texts)} предл.): {chunk_texts}")

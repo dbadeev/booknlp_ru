@@ -82,6 +82,7 @@ class KozievWrapper:
             raise
 
     # ─── Chunking ─────────────────────────────────────────────────────────────
+    # noinspection DuplicatedCode
     @staticmethod
     def _split_to_chunks(
             text: str,
@@ -190,7 +191,7 @@ class KozievWrapper:
         return "\n".join(lines) + "\n"
 
     # ─── Public API ───────────────────────────────────────────────────────────
-
+    # noinspection DuplicatedCode
     def parse_text(
         self,
         text: str,
@@ -265,6 +266,7 @@ class KozievWrapper:
             self.logger.error(f"❌ Error during Koziev parsing: {exc}")
             raise
 
+    # noinspection DuplicatedCode
     def parse_batch(
         self,
         texts: List[str],
@@ -332,6 +334,7 @@ class KozievWrapper:
 
 
 # ─── Вспомогательные функции вывода ───────────────────────────────────────────
+# noinspection DuplicatedCode
 def _print_token(tok: Dict[str, Any]) -> None:
     print(f"\n  ── Токен #{tok['id']}: '{tok['form']}' " + "─" * 30)
     print(f"     form:  {tok['form']}")
@@ -346,7 +349,9 @@ def _print_conllu(conllu: str) -> None:
 
 
 # ─── __main__: тесты через wrapper (с chunking) ──────────────────────────────
-if __name__ == "__main__":
+# noinspection DuplicatedCode
+def main() -> None:
+    """CLI entry point для тестирования KozievWrapper."""
     ap = argparse.ArgumentParser(description="Koziev wrapper тест")
     ap.add_argument(
         "--chunk-size", type=int, default=default_chunk_size, dest="chunk_size",
@@ -481,3 +486,6 @@ if __name__ == "__main__":
         _print_conllu(br)
 
     print(f"\n{'✅ ВСЕ ТЕСТЫ ЗАВЕРШЕНЫ':^72}")
+
+if __name__ == "__main__":
+    main()
