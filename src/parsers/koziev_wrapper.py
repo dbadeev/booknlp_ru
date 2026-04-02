@@ -54,7 +54,7 @@ logging.basicConfig(
 OutputFormat = Literal["native", "conllu"]
 TokenizerType = Literal["native", "razdel"]
 
-default_chunk_size: int = 10  # предложений на чанк; подбирается под GPU и тип текста
+default_chunk_size: int = 32  # предложений на чанк; подбирается под GPU и тип текста
 
 
 class KozievWrapper:
@@ -203,7 +203,7 @@ class KozievWrapper:
             tokenizer:     'native' — rutokenizer токенизирует слова в Modal
                            'razdel' — razdel.tokenize токенизирует здесь, результаты
                                       отправляются предтокенизированными
-            chunk_size:    Предложений на чанк. По умолчанию = 10.
+            chunk_size:    Предложений на чанк. По умолчанию = 32.
 
         Returns:
             native → List[Dict]

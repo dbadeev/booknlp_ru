@@ -1,7 +1,7 @@
 # udpipe_wrapper.py
 # ─────────────────────────────────────────────────────────────────────────────
 # Тонкий клиент для UDPipeService (Modal).
-# Единственные обязанности:
+# Функции:
 #   split_to_sentence_chunks()  — native-путь:  List[List[str]]
 #   split_to_chunks()           — razdel-путь:  (token_chunks, offset_chunks)
 #   merge_chunks()              — склейка результатов .map()
