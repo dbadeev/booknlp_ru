@@ -21,6 +21,8 @@ import sys
 from pathlib import Path
 from typing import Literal
 
+from koziev_wrapper import KozievWrapper
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -109,8 +111,6 @@ def parse_file(
     Returns:
         Словарь {(tokenizer, output_format): output_path} для каждой пары.
     """
-    from koziev_wrapper import KozievWrapper
-
     text = input_path.read_text(encoding="utf-8")
     if not text.strip():
         raise ValueError(f"Файл пуст: {input_path}")

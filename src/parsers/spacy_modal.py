@@ -3,7 +3,6 @@ import logging
 from typing import Any, Dict, List, Literal, Tuple
 
 # ─── Modal image ────────────────────────────────────────────────────────────
-
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
@@ -12,38 +11,43 @@ image = (
         "pymorphy3-dicts-ru>=2.4.0",
         "spacy-conll>=4.0.0",
         "razdel>=0.5.0",
+        # [native_ru] Установка через zip-архив GitHub — не требует git в образе.
+        "spacy_russian_tokenizer @ https://github.com/aatimofeev/spacy_russian_tokenizer/archive/refs/heads/master.zip",
     )
     .run_commands("python -m spacy download ru_core_news_lg")
 )
 
 app = modal.App("booknlp-ru-spacy")
 
-TokenizerType = Literal["internal", "razdel"]
-OutputFormat  = Literal["native", "conllu"]
+# [native_ru] Добавлено значение "native_ru" в тип TokenizerType.
+# native_ru = spaCy rule-based tokenizer + мёрж дефисных конструкций (SynTagRus).
+TokenizerType = Literal["internal", "razdel", "native_ru"]
+OutputFormat = Literal["native", "conllu"]
 
 
 # ─── Service ─────────────────────────────────────────────────────────────────
-
 @app.cls(image=image, timeout=600, scaledown_window=300)
 class SpacyService:
     """
     Modal-сервис для морфо-синтаксического анализа с использованием
     официальной модели ru_core_news_lg.
 
-    Поддерживает два токенизатора:
-      internal — встроенный rule-based токенизатор spaCy
-      razdel   — внешний ML-токенизатор razdel (рекомендован для русского)
+    Поддерживает три токенизатора:
+      internal  — встроенный rule-based токенизатор spaCy
+      razdel    — внешний ML-токенизатор razdel (рекомендован для русского)
+      native_ru — spaCy rule-based + мёрж дефисных конструкций  [native_ru]
+                  (spacy_russian_tokenizer: MERGE_PATTERNS + SYNTAGRUS_RARE_CASES)
 
     Два формата вывода:
-      native — полный набор атрибутов spaCy (List[Dict])
-      conllu — стандарт Universal Dependencies (str)
+      native  — полный набор атрибутов spaCy (List[Dict])
+      conllu  — стандарт Universal Dependencies (str)
 
     Сентенизация выполняется в wrapper ДО отправки в Modal.
     Основные методы принимают уже разбитые предложения (чанки).
 
     Основные методы (production path из wrapper):
       parse_sentence_chunk        — razdel path: List[(text, start_char)]
-      parse_sentence_chunk_native — internal path: List[str]
+      parse_sentence_chunk_native — internal/native_ru path: List[str]  [native_ru]
 
     Вспомогательные методы (local_entrypoint / прямые вызовы):
       parse       — одиночный текст целиком
@@ -69,10 +73,11 @@ class SpacyService:
             # noinspection DuplicatedCode
             def __call__(self, text: str):
                 from spacy.tokens import Doc
+
                 tokens = list(razdel_tokenize(text))
                 if not tokens:
                     return Doc(self.vocab, words=[], spaces=[])
-                words  = [t.text for t in tokens]
+                words = [t.text for t in tokens]
                 spaces = [
                     tokens[i].stop < tokens[i + 1].start
                     for i in range(len(tokens) - 1)
@@ -82,15 +87,34 @@ class SpacyService:
         # noinspection DuplicatedCode
         self.razdel_tokenizer = RazdelTokenizer(self.nlp.vocab)
 
+        # [native_ru] Инициализация компонента spacy_russian_tokenizer.
+        # RussianTokenizer мёржит дефисные конструкции по правилам SynTagRus
+        # ("бизнес-ланч", "всё-таки", "Кружка-термос" → единый токен).
+        # Вызывается вручную в _make_doc, а не через nlp.add_pipe — это
+        # позволяет не нарушать порядок компонентов spaCy v3 pipeline и
+        # применять мёрж только при tokenizer="native_ru".
+        from spacy_russian_tokenizer import (
+            RussianTokenizer,
+            MERGE_PATTERNS,
+            SYNTAGRUS_RARE_CASES,
+        )
+        self.ru_tokenizer_component = RussianTokenizer(
+            self.nlp,
+            MERGE_PATTERNS + SYNTAGRUS_RARE_CASES,
+        )
+
         if "conll_formatter" not in self.nlp.pipe_names:
             config = {
                 "ext_names": {
                     "conll_str": "conll_str",
-                    "conll":     "conll",
-                    "conll_pd":  "conll_pd",
+                    "conll": "conll",
+                    "conll_pd": "conll_pd",
                 },
                 "conversion_maps": {
-                    "UPOS": {}, "XPOS": {}, "FEATS": {}, "DEPREL": {},
+                    "UPOS": {},
+                    "XPOS": {},
+                    "FEATS": {},
+                    "DEPREL": {},
                 },
             }
             self.nlp.add_pipe("conll_formatter", config=config, last=True)
@@ -98,8 +122,8 @@ class SpacyService:
         # Отключаем senter/sentencizer: каждый doc уже содержит ровно одно
         # предложение (сентенизация выполнена снаружи — razdel или wrapper).
         # Без этого spaCy может пересентенизировать doc, что сломает:
-        #   - нумерацию токенов в _format_native
-        #   - разбивку на .sents в spacy-conll (_format_conllu)
+        # - нумерацию токенов в _format_native
+        # - разбивку на .sents в spacy-conll (_format_conllu)
         for pipe_name in ("senter", "sentencizer"):
             if pipe_name in self.nlp.pipe_names:
                 self.nlp.remove_pipe(pipe_name)
@@ -107,14 +131,27 @@ class SpacyService:
 
         self.logger.info("SpaCy loaded (ru_core_news_lg)!")
         self.logger.info(f"Pipeline components: {self.nlp.pipe_names}")
-        self.logger.info("Tokenizers: internal (spaCy rule-based), razdel (ML)")
+        # [native_ru] Обновлено лог-сообщение: добавлен native_ru.
+        self.logger.info(
+            "Tokenizers: internal (spaCy rule-based), "
+            "razdel (ML), "
+            "native_ru (spaCy rule-based + SynTagRus merge patterns)"
+        )
 
     # ─── Internal helpers ────────────────────────────────────────────────────
-
     def _make_doc(self, text: str, tokenizer_type: TokenizerType):
         """Токенизирует текст выбранным токенизатором без запуска pipeline."""
         if tokenizer_type == "razdel":
             return self.razdel_tokenizer(text)
+        # [native_ru] Новая ветка токенизатора native_ru.
+        # Шаг 1: стандартная spaCy-токенизация (prefix/suffix/infix правила).
+        # Шаг 2: ru_tokenizer_component(doc) мёржит токены по MERGE_PATTERNS +
+        #         SYNTAGRUS_RARE_CASES — результат ближе к аннотации SynTagRus,
+        #         на которой обучена ru_core_news_lg (улучшает parser и NER).
+        if tokenizer_type == "native_ru":
+            doc = self.original_tokenizer(text)
+            doc = self.ru_tokenizer_component(doc)
+            return doc
         return self.original_tokenizer(text)
 
     def _run_pipeline(self, doc):
@@ -145,7 +182,6 @@ class SpacyService:
     def _format_native(doc, char_offset: int = 0) -> List[Dict[str, Any]]:
         """
         Полный нативный формат spaCy — все атрибуты токена.
-
         char_offset: смещение начала текста в исходном документе.
         Передаётся из parse_sentence_chunk для корректных start_char/end_char
         относительно всего исходного текста (не только текущего предложения).
@@ -153,71 +189,71 @@ class SpacyService:
         result = []
         for sent in doc.sents:
             sent_data = {
-                "text":       sent.text,
+                "text": sent.text,
                 "start_char": sent.start_char + char_offset,
-                "end_char":   sent.end_char   + char_offset,
-                "words":      [],
+                "end_char": sent.end_char + char_offset,
+                "words": [],
             }
             sent_token_offset = sent.start  # индекс первого токена предложения в Doc
             for token in sent:
                 word_dict = {
-                    # ── Позиция ──────────────────────────────────────────
-                    "id":         token.i - sent_token_offset + 1,
+                    # ── Позиция ─────────────────────────────────────────────
+                    "id": token.i - sent_token_offset + 1,
                     "start_char": token.idx + char_offset,
-                    "end_char":   token.idx + len(token.text) + char_offset,
-                    # ── Форма ────────────────────────────────────────────
-                    "form":  token.text,
-                    "norm":  token.norm_,
+                    "end_char": token.idx + len(token.text) + char_offset,
+                    # ── Форма ───────────────────────────────────────────────
+                    "form": token.text,
+                    "norm": token.norm_,
                     "lower": token.lower_,
                     "shape": token.shape_,
-                    # ── Лемма и POS ──────────────────────────────────────
-                    # lemma_ вычислен через pymorphy3 (режим lemmatizer=pymorphy3
-                    # задокументирован для русского языка в spaCy)
+                    # ── Лемма и POS ─────────────────────────────────────────
                     "lemma": token.lemma_,
-                    "upos":  token.pos_,
-                    "xpos":  token.tag_,
+                    "upos": token.pos_,
+                    "xpos": token.tag_,
                     "feats": str(token.morph) if token.morph.to_dict() else "_",
-                    # ── Синтаксис ─────────────────────────────────────────
-                    "head":     (token.head.i - sent_token_offset + 1
-                                 if token.head.i != token.i else 0),
-                    "deprel":   token.dep_,
-                    "n_lefts":  token.n_lefts,
+                    # ── Синтаксис ───────────────────────────────────────────
+                    "head": (
+                        token.head.i - sent_token_offset + 1
+                        if token.head.i != token.i
+                        else 0
+                    ),
+                    "deprel": token.dep_,
+                    "n_lefts": token.n_lefts,
                     "n_rights": token.n_rights,
-                    "children": [c.i - sent_token_offset + 1
-                                 for c in token.children],
-                    # ── Именованные сущности ──────────────────────────────
+                    "children": [c.i - sent_token_offset + 1 for c in token.children],
+                    # ── Именованные сущности ────────────────────────────────
                     "ent_type": token.ent_type_ or None,
-                    "ent_iob":  token.ent_iob_ if token.ent_iob_ != "O" else None,
-                    # ── Метаданные ────────────────────────────────────────
+                    "ent_iob": token.ent_iob_ if token.ent_iob_ != "O" else None,
+                    # ── Метаданные ──────────────────────────────────────────
                     "is_sent_start": token.is_sent_start,
-                    "whitespace":    token.whitespace_,
-                    "misc":          "SpaceAfter=No" if not token.whitespace_ else "_",
-                    # ── Лексические флаги ────────────────────────────────
-                    "is_alpha":   token.is_alpha,
-                    "is_digit":   token.is_digit,
-                    "is_punct":   token.is_punct,
-                    "is_space":   token.is_space,
-                    "is_stop":    token.is_stop,
-                    "is_oov":     token.is_oov,
-                    "like_num":   token.like_num,
-                    "like_url":   token.like_url,
+                    "whitespace": token.whitespace_,
+                    "misc": "SpaceAfter=No" if not token.whitespace_ else "_",
+                    # ── Лексические флаги ───────────────────────────────────
+                    "is_alpha": token.is_alpha,
+                    "is_digit": token.is_digit,
+                    "is_punct": token.is_punct,
+                    "is_space": token.is_space,
+                    "is_stop": token.is_stop,
+                    "is_oov": token.is_oov,
+                    "like_num": token.like_num,
+                    "like_url": token.like_url,
                     "like_email": token.like_email,
-                    # ── Вектор ────────────────────────────────────────────
-                    "has_vector":  token.has_vector,
-                    "cluster":     token.cluster,
-                    "vector_norm": round(float(token.vector_norm), 6)
-                                   if token.has_vector else None,
+                    # ── Вектор ──────────────────────────────────────────────
+                    "has_vector": token.has_vector,
+                    "cluster": token.cluster,
+                    "vector_norm": (
+                        round(float(token.vector_norm), 6) if token.has_vector else None
+                    ),
                 }
                 sent_data["words"].append(word_dict)
-
             ents = [
                 {
-                    "text":       ent.text,
-                    "start":      ent.start      - sent.start,
-                    "end":        ent.end         - sent.start,
-                    "label":      ent.label_,
+                    "text": ent.text,
+                    "start": ent.start - sent.start,
+                    "end": ent.end - sent.start,
+                    "label": ent.label_,
                     "start_char": ent.start_char + char_offset,
-                    "end_char":   ent.end_char   + char_offset,
+                    "end_char": ent.end_char + char_offset,
                 }
                 for ent in sent.ents
             ]
@@ -230,14 +266,13 @@ class SpacyService:
     def format_native(doc, char_offset: int = 0) -> List[Dict[str, Any]]:
         """
         Форматирует spaCy Doc в List[SentenceDict].
-
         Doc считается одним предложением — сентенизация уже выполнена снаружи
         (razdel в wrapper или split_to_sentence_chunks).
         Итерация по doc.sents намеренно не используется во избежание
         рассинхронизации с внешней сентенизацией.
 
         Args:
-            doc:         spaCy Doc (одно предложение)
+            doc: spaCy Doc (одно предложение)
             char_offset: смещение символов относительно исходного текста
                          (передаётся из parse_sentence_chunk для razdel-пути)
         Returns:
@@ -248,28 +283,23 @@ class SpacyService:
             return []
 
         words: List[Dict[str, Any]] = []
-
         for token in tokens:
             morph_str = str(token.morph) if token.morph.to_dict() else ""
-
             word_dict: Dict[str, Any] = {
                 # Позиция в предложении (1-based, CoNLL-совместимо)
                 "id": token.i + 1,
                 "start_char": token.idx + char_offset,
                 "end_char": token.idx + len(token.text) + char_offset,
-
                 # Формы
                 "form": token.text,
                 "norm": token.norm_,
                 "lower": token.lower_,
                 "shape": token.shape_,
-
                 # Морфология
                 "lemma": token.lemma_,
                 "upos": token.pos_,
                 "xpos": token.tag_,
                 "feats": morph_str,
-
                 # Синтаксис
                 # head=0 означает root (токен указывает на себя)
                 "head": token.head.i + 1 if token.head.i != token.i else 0,
@@ -277,19 +307,15 @@ class SpacyService:
                 "nlefts": token.n_lefts,
                 "nrights": token.n_rights,
                 "children": [c.i + 1 for c in token.children],
-
                 # NER
                 "ent_type": token.ent_type_ or None,
                 "ent_iob": token.ent_iob_ if token.ent_iob_ != "O" else None,
-
                 # Границы предложений
                 # Для первого токена всегда True (doc = одно предложение)
                 "is_sent_start": token.i == 0,
-
                 # Пробелы / CoNLL misc
                 "whitespace": token.whitespace_,
                 "misc": "SpaceAfter=No" if not token.whitespace_ else "",
-
                 # Булевы флаги
                 "is_alpha": token.is_alpha,
                 "is_digit": token.is_digit,
@@ -300,11 +326,12 @@ class SpacyService:
                 "like_num": token.like_num,
                 "like_url": token.like_url,
                 "like_email": token.like_email,
-
                 # Векторы
                 "has_vector": token.has_vector,
                 "cluster": token.cluster,
-                "vector_norm": round(float(token.vector_norm), 6) if token.has_vector else None,
+                "vector_norm": (
+                    round(float(token.vector_norm), 6) if token.has_vector else None
+                ),
             }
             words.append(word_dict)
 
@@ -313,7 +340,7 @@ class SpacyService:
             {
                 "text": ent.text,
                 "start": ent.start,  # индекс первого токена сущности в doc
-                "end": ent.end,  # индекс после последнего токена
+                "end": ent.end,      # индекс после последнего токена
                 "label": ent.label_,
                 "start_char": ent.start_char + char_offset,
                 "end_char": ent.end_char + char_offset,
@@ -328,7 +355,6 @@ class SpacyService:
             "words": words,
             "entities": entities,
         }
-
         return [sent_data]
 
     @staticmethod
@@ -337,8 +363,7 @@ class SpacyService:
         # noinspection PyProtectedMember
         return doc._.conll_str  # type: ignore[attr-defined]
 
-    # ─── Production methods: принимают pre-split чанки из wrapper ────────────
-
+    # ─── Production methods: принимают pre-split чанки из wrapper ───────────
     @modal.method()
     def parse_sentence_chunk(
         self,
@@ -348,7 +373,6 @@ class SpacyService:
     ) -> Any:
         """
         Razdel path.
-
         Принимает чанк пар (sentence_text, start_char_in_original).
         start_char используется для вычисления символьных позиций токенов
         относительно исходного текста.
@@ -361,20 +385,17 @@ class SpacyService:
             native → List[Dict]
             conllu → str
         """
-        docs         = []
+        docs = []
         char_offsets = []
         for sent_text, char_offset in sentences_with_offsets:
             docs.append(self._make_doc(sent_text, "razdel"))
             char_offsets.append(char_offset)
-
         docs = self._run_pipeline_batch(docs, batch_size=batch_size)
-
         if output_format == "conllu":
             # noinspection PyProtectedMember
             return "\n\n".join(
                 doc._.conll_str.strip() for doc in docs  # type: ignore[attr-defined]
             ) + "\n"
-
         result = []
         for doc, char_offset in zip(docs, char_offsets):
             result.extend(self.format_native(doc, char_offset=char_offset))
@@ -386,40 +407,45 @@ class SpacyService:
         sentences: List[str],
         output_format: str = "native",
         batch_size: int = 32,
+        # [native_ru] Добавлен параметр tokenizer.
+        # Значение по умолчанию "internal" сохраняет обратную совместимость:
+        # существующие вызовы из wrapper без явного tokenizer продолжают работать.
+        # Допустимые значения: "internal" | "native_ru"
+        tokenizer: str = "internal",
     ) -> Any:
         """
-        Internal/native path.
-
+        Internal / native_ru path.
         Принимает чанк текстов предложений (без символьных офсетов).
         start_char/end_char токенов — относительны каждого предложения.
 
         Args:
             sentences:     List[str] — тексты предложений чанка
             output_format: 'native' | 'conllu'
-            batch_size: int
+            batch_size:    int
+            tokenizer:     'internal' | 'native_ru'  [native_ru]
         Returns:
             native → List[Dict]
             conllu → str
         """
-        docs = [self._make_doc(s, "internal") for s in sentences]
+        # [native_ru] tokenizer пробрасывается в _make_doc:
+        #   "internal"  → self.original_tokenizer(text) (spaCy rule-based)
+        #   "native_ru" → original_tokenizer + ru_tokenizer_component (мёрж паттернов)
+        docs = [self._make_doc(s, tokenizer) for s in sentences]
         docs = self._run_pipeline_batch(docs, batch_size=batch_size)
-
         if output_format == "conllu":
             # noinspection PyProtectedMember
             return "\n\n".join(
                 doc._.conll_str.strip() for doc in docs  # type: ignore[attr-defined]
             ) + "\n"
-
         result = []
         for doc in docs:
-            # char_offset=0: native-путь получает уже разбитые предложения
+            # char_offset=0: native/native_ru путь получает уже разбитые предложения
             # без информации об исходных смещениях — это осознанное ограничение.
-            # startChar/endChar токенов будут относительны начала каждого предложения.
+            # start_char/end_char токенов будут относительны начала каждого предложения.
             result.extend(self.format_native(doc, char_offset=0))
         return result
 
-    # ─── Backward compat / local_entrypoint ──────────────────────────────────
-
+    # ─── Backward compat / local_entrypoint ─────────────────────────────────
     @modal.method()
     def parse(
         self,
@@ -450,54 +476,56 @@ class SpacyService:
         return [self._format_native(doc) for doc in docs]
 
 
-# ─── Вспомогательная функция вывода ─────────────────────────────────────────
+# ─── Вспомогательная функция вывода ──────────────────────────────────────────
 # noinspection DuplicatedCode
 def _print_token_full(tok: Dict[str, Any]) -> None:
     """Выводит все поля токена в нативном формате spaCy."""
     print(f"\n  ── Токен #{tok['id']}: '{tok['form']}' " + "─" * 30)
     print(f"  ПОЗИЦИЯ:")
-    print(f"    start_char:    {tok['start_char']}")
-    print(f"    end_char:      {tok['end_char']}")
+    print(f"    start_char:      {tok['start_char']}")
+    print(f"    end_char:        {tok['end_char']}")
     print(f"  ФОРМА:")
-    print(f"    form:          {tok['form']}")
-    print(f"    norm:          {tok.get('norm', '—')}")
-    print(f"    lower:         {tok.get('lower', '—')}")
-    print(f"    shape:         {tok.get('shape', '—')}")
+    print(f"    form:            {tok['form']}")
+    print(f"    norm:            {tok.get('norm', '—')}")
+    print(f"    lower:           {tok.get('lower', '—')}")
+    print(f"    shape:           {tok.get('shape', '—')}")
     print(f"  ЛЕММА И POS:")
-    print(f"    lemma:         {tok['lemma']}")
-    print(f"    upos:          {tok['upos']}")
-    print(f"    xpos:          {tok['xpos']}")
-    print(f"    feats:         {tok['feats']}")
+    print(f"    lemma:           {tok['lemma']}")
+    print(f"    upos:            {tok['upos']}")
+    print(f"    xpos:            {tok['xpos']}")
+    print(f"    feats:           {tok['feats']}")
     print(f"  СИНТАКСИС:")
-    print(f"    head:          {tok['head']}")
-    print(f"    deprel:        {tok['deprel']}")
-    print(f"    n_lefts:       {tok.get('n_lefts', '—')}")
-    print(f"    n_rights:      {tok.get('n_rights', '—')}")
-    print(f"    children:      {tok.get('children', [])}")
+    print(f"    head:            {tok['head']}")
+    print(f"    deprel:          {tok['deprel']}")
+    print(f"    n_lefts:         {tok.get('n_lefts', '—')}")
+    print(f"    n_rights:        {tok.get('n_rights', '—')}")
+    print(f"    children:        {tok.get('children', [])}")
     print(f"  СУЩНОСТИ:")
-    print(f"    ent_type:      {tok.get('ent_type') or '—'}")
-    print(f"    ent_iob:       {tok.get('ent_iob') or '—'}")
+    print(f"    ent_type:        {tok.get('ent_type') or '—'}")
+    print(f"    ent_iob:         {tok.get('ent_iob') or '—'}")
     print(f"  МЕТАДАННЫЕ:")
-    print(f"    is_sent_start: {tok.get('is_sent_start')}")
-    print(f"    whitespace:    '{tok.get('whitespace', '')}'")
-    print(f"    misc:          {tok.get('misc', '—')}")
+    print(f"    is_sent_start:   {tok.get('is_sent_start')}")
+    print(f"    whitespace:      '{tok.get('whitespace', '')}'")
+    print(f"    misc:            {tok.get('misc', '—')}")
     print(f"  ФЛАГИ:")
-    print(f"    is_alpha:      {tok.get('is_alpha')}")
-    print(f"    is_digit:      {tok.get('is_digit')}")
-    print(f"    is_punct:      {tok.get('is_punct')}")
-    print(f"    is_space:      {tok.get('is_space')}")
-    print(f"    is_stop:       {tok.get('is_stop')}")
-    print(f"    is_oov:        {tok.get('is_oov')}")
-    print(f"    like_num:      {tok.get('like_num')}")
-    print(f"    like_url:      {tok.get('like_url')}")
-    print(f"    like_email:    {tok.get('like_email')}")
+    print(f"    is_alpha:        {tok.get('is_alpha')}")
+    print(f"    is_digit:        {tok.get('is_digit')}")
+    print(f"    is_punct:        {tok.get('is_punct')}")
+    print(f"    is_space:        {tok.get('is_space')}")
+    print(f"    is_stop:         {tok.get('is_stop')}")
+    print(f"    is_oov:          {tok.get('is_oov')}")
+    print(f"    like_num:        {tok.get('like_num')}")
+    print(f"    like_url:        {tok.get('like_url')}")
+    print(f"    like_email:      {tok.get('like_email')}")
     print(f"  ВЕКТОР:")
-    print(f"    has_vector:    {tok.get('has_vector')}")
+    print(f"    has_vector:      {tok.get('has_vector')}")
     vn = tok.get("vector_norm")
-    print(f"    vector_norm:   {vn if vn is not None else '—'}")
+    print(f"    vector_norm:     {vn if vn is not None else '—'}")
 
-    # ─── Константа заголовка CoNLL-U ──────────────────────────────────────────
+
+# ─── Константа заголовка CoNLL-U ─────────────────────────────────────────────
 CONLLU_HEADER = "# ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
+
 
 def _print_conllu(text: str, conllu: str) -> None:
     """Выводит CoNLL-U блок с текстом предложения и заголовком столбцов."""
@@ -505,22 +533,29 @@ def _print_conllu(text: str, conllu: str) -> None:
     print(CONLLU_HEADER)
     print(conllu)
 
+
 # ─── local_entrypoint: тест Modal-сервиса напрямую ───────────────────────────
 # noinspection DuplicatedCode
 @app.local_entrypoint()
 def main():
     """
     Тестирует SpaCyService напрямую — без wrapper, без chunking.
-    Проверяет: модель загружена, оба токенизатора работают,
-    оба формата вывода корректны, оба production-метода работают.
+    Проверяет: модель загружена, все три токенизатора работают,
+    оба формата вывода корректны, все production-методы работают.
+
+    Тест-кейсы:
+      1–2:  native  + internal / razdel    (parse.remote)
+      3–4:  conllu  + internal / razdel    (parse.remote)
+      5:    parse_sentence_chunk           (razdel path, production)
+      6:    parse_sentence_chunk_native    (internal path, production)
+      7–8:  native/conllu + native_ru      (parse.remote)           [native_ru]
+      9:    parse_sentence_chunk_native    (native_ru path, production) [native_ru]
     """
     from razdel import sentenize
 
     service = SpacyService()
-
     text_single = "Кружка-термос стоит 500р."
-    text_multi  = "Зло, которым пугаешь, не так зло. Москва — столица России."
-
+    text_multi = "Зло, которым пугаешь, не так зло. Москва — столица России."
     sep = "=" * 72
 
     # ── 1. NATIVE + INTERNAL ──────────────────────────────────────────────
@@ -533,14 +568,14 @@ def main():
         for tok in sent["words"]:
             _print_token_full(tok)
 
-    # ── 2. NATIVE + RAZDEL ───────────────────────────────────────────────
+    # ── 2. NATIVE + RAZDEL ────────────────────────────────────────────────
     print(f"\n{sep}")
     print("2. NATIVE + RAZDEL (parse.remote)")
     print(sep)
     result_r = service.parse.remote(text_single, output_format="native", tokenizer="razdel")
     print(f"\n⚡ Сравнение токенизаторов для: '{text_single}'")
-    print(f"  internal: {[w['form'] for s in result   for w in s['words']]}")
-    print(f"  razdel:   {[w['form'] for s in result_r for w in s['words']]}")
+    print(f"   internal:  {[w['form'] for s in result for w in s['words']]}")
+    print(f"   razdel:    {[w['form'] for s in result_r for w in s['words']]}")
     for sent in result_r:
         print(f"\nПредложение: '{sent['text']}'")
         for tok in sent["words"]:
@@ -555,7 +590,7 @@ def main():
     )
     _print_conllu(text_multi, result_conllu_i)
 
-    # ── 4. CONLL-U + RAZDEL ──────────────────────────────────────────────
+    # ── 4. CONLL-U + RAZDEL ───────────────────────────────────────────────
     print(f"\n{sep}")
     print("4. CONLL-U + RAZDEL (parse.remote)")
     print(sep)
@@ -582,14 +617,78 @@ def main():
     chunk_texts = [s.text for s in sentences]
     print(f"Чанк ({len(chunk_texts)} предложений): {chunk_texts}")
     result_chunk_native = service.parse_sentence_chunk_native.remote(
-        chunk_texts, output_format="native"
+        chunk_texts, output_format="native", tokenizer="internal"
     )
     for sent in result_chunk_native:
-        print(f"\nПредложение: '{sent['text']}' "
-              f"(chars {sent['start_char']}:{sent['end_char']})")
+        print(
+            f"\nПредложение: '{sent['text']}' "
+            f"(chars {sent['start_char']}:{sent['end_char']})"
+        )
         if sent.get("entities"):
             print(f"  Сущности: {[(e['text'], e['label']) for e in sent['entities']]}")
         for tok in sent["words"]:
             _print_token_full(tok)
+
+    # ── 7. NATIVE + NATIVE_RU (parse.remote) ─────────────────────────────
+    # [native_ru] Тест нового токенизатора native_ru через parse.remote.
+    # Ключевая проверка: дефисные конструкции ("Кружка-термос") должны
+    # остаться единым токеном, а не разбиваться на 3 части как в "internal".
+    print(f"\n{sep}")
+    print("7. NATIVE + NATIVE_RU (parse.remote)  [native_ru]")
+    print(sep)
+    result_nru = service.parse.remote(
+        text_single, output_format="native", tokenizer="native_ru"
+    )
+    print(f"\n⚡ Сравнение всех трёх токенизаторов для: '{text_single}'")
+    print(f"   internal:  {[w['form'] for s in result   for w in s['words']]}")
+    print(f"   razdel:    {[w['form'] for s in result_r for w in s['words']]}")
+    print(f"   native_ru: {[w['form'] for s in result_nru for w in s['words']]}")
+    print(f"\n   Ожидаемый результат native_ru: 'Кружка-термос' — единый токен")
+    for sent in result_nru:
+        print(f"\nПредложение: '{sent['text']}'")
+        for tok in sent["words"]:
+            _print_token_full(tok)
+
+    # ── 8. CONLL-U + NATIVE_RU (parse.remote) ─────────────────────────────
+    # [native_ru] Тест CoNLL-U вывода с токенизатором native_ru.
+    # Смерженные токены не генерируют multi-word token строки (1-2 CoNLL-U),
+    # т.к. мёрж происходит на уровне spaCy Doc до передачи в pipeline.
+    print(f"\n{sep}")
+    print("8. CONLL-U + NATIVE_RU (parse.remote)  [native_ru]")
+    print(sep)
+    result_conllu_nru = service.parse.remote(
+        text_multi, output_format="conllu", tokenizer="native_ru"
+    )
+    _print_conllu(text_multi, result_conllu_nru)
+
+    # ── 9. parse_sentence_chunk_native — native_ru path (production method) ─
+    # [native_ru] Тест production-метода parse_sentence_chunk_native с
+    # tokenizer="native_ru". Проверяет корректность передачи параметра
+    # tokenizer через Modal RPC в _make_doc. Используется текст с несколькими
+    # дефисными конструкциями для наглядного сравнения с "internal".
+    print(f"\n{sep}")
+    print("9. parse_sentence_chunk_native (native_ru path)  [native_ru]")
+    print(sep)
+    text_hyphen = (
+        "Суп-харчо — фирменное блюдо. "
+        "Бизнес-ланч стоит 500р. "
+        "Всё-таки хорошо."
+    )
+    sentences_h = list(sentenize(text_hyphen))
+    chunk_nru = [s.text for s in sentences_h]
+    print(f"Чанк ({len(chunk_nru)} предложений): {chunk_nru}")
+
+    result_nru_chunk = service.parse_sentence_chunk_native.remote(
+        chunk_nru, output_format="native", tokenizer="native_ru"
+    )
+    result_int_chunk = service.parse_sentence_chunk_native.remote(
+        chunk_nru, output_format="native", tokenizer="internal"
+    )
+
+    print(f"\n⚡ Сравнение токенизации дефисных конструкций:")
+    for i, (s_nru, s_int) in enumerate(zip(result_nru_chunk, result_int_chunk), 1):
+        print(f"\n  Предложение {i}: '{s_nru['text']}'")
+        print(f"    internal:  {[w['form'] for w in s_int['words']]}")
+        print(f"    native_ru: {[w['form'] for w in s_nru['words']]}")
 
     print(f"\n{'✅ Тестирование завершено!':^72}")
