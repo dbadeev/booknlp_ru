@@ -140,6 +140,11 @@ class SpacyService:
                     "FEATS": {},
                     "DEPREL": {},
                 },
+                # spacy-conll >= 4.0 объявляет field_names как Dict[str, str] (не Optional).
+                # Валидатор confection отклоняет дефолтный None.
+                # Пустой словарь {} валиден — formatter подставит стандартные
+                # CoNLL-U имена (ID, FORM, LEMMA, UPOS, XPOS, FEATS, HEAD, DEPREL, DEPS, MISC).
+                "field_names": {},
             }
             self.nlp.add_pipe("conll_formatter", config=config, last=True)
 
