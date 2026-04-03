@@ -87,21 +87,45 @@ class SpacyService:
         # noinspection DuplicatedCode
         self.razdel_tokenizer = RazdelTokenizer(self.nlp.vocab)
 
-        # [native_ru] Инициализация компонента spacy_russian_tokenizer.
-        # RussianTokenizer мёржит дефисные конструкции по правилам SynTagRus
-        # ("бизнес-ланч", "всё-таки", "Кружка-термос" → единый токен).
-        # Вызывается вручную в _make_doc, а не через nlp.add_pipe — это
-        # позволяет не нарушать порядок компонентов spaCy v3 pipeline и
-        # применять мёрж только при tokenizer="native_ru".
-        from spacy_russian_tokenizer import (
-            RussianTokenizer,
-            MERGE_PATTERNS,
-            SYNTAGRUS_RARE_CASES,
+        # # [native_ru] Инициализация компонента spacy_russian_tokenizer.
+        # # RussianTokenizer мёржит дефисные конструкции по правилам SynTagRus
+        # # ("бизнес-ланч", "всё-таки", "Кружка-термос" → единый токен).
+        # # Вызывается вручную в _make_doc, а не через nlp.add_pipe — это
+        # # позволяет не нарушать порядок компонентов spaCy v3 pipeline и
+        # # применять мёрж только при tokenizer="native_ru".
+        # from spacy_russian_tokenizer import (
+        #     RussianTokenizer,
+        #     MERGE_PATTERNS,
+        #     SYNTAGRUS_RARE_CASES,
+        # )
+        # self.ru_tokenizer_component = RussianTokenizer(
+        #     self.nlp,
+        #     MERGE_PATTERNS + SYNTAGRUS_RARE_CASES,
+        # )
+
+        from spacy.matcher import Matcher as SpacyMatcher
+        from spacy.util import filter_spans
+        from spacy_russian_tokenizer import MERGE_PATTERNS, SYNTAGRUS_RARE_CASES
+
+        class _RuMatcher:
+            def __init__(self, vocab, patterns):
+                self.matcher = SpacyMatcher(vocab)
+                self.matcher.add("MERGE_HYPHEN", patterns)  # v3: list, не *args
+
+            def __call__(self, doc):
+                matches = self.matcher(doc)
+                if not matches:
+                    return doc
+                spans = filter_spans([doc[start:end] for _, start, end in matches])
+                with doc.retokenize() as retokenizer:
+                    for span in spans:
+                        retokenizer.merge(span)  # v3: retokenize() вместо span.merge()
+                return doc
+
+        self.ru_tokenizer_component = _RuMatcher(
+            self.nlp.vocab, MERGE_PATTERNS + SYNTAGRUS_RARE_CASES
         )
-        self.ru_tokenizer_component = RussianTokenizer(
-            self.nlp,
-            MERGE_PATTERNS + SYNTAGRUS_RARE_CASES,
-        )
+
 
         if "conll_formatter" not in self.nlp.pipe_names:
             config = {
