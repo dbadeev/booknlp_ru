@@ -325,10 +325,7 @@ class SpacyParser:
                     all_chunks.extend(text_chunks)
                 if not all_chunks:
                     return [[] if output_format == "native" else "" for _ in texts]
-                if len(all_chunks) == 1:
-                    return self.service.parse_sentence_chunk.remote(
-                        all_chunks[0], output_format=output_format
-                    )
+
                 all_results = list(
                     self.service.parse_sentence_chunk.map(
                         all_chunks, kwargs={"output_format": output_format}
@@ -598,7 +595,7 @@ if __name__ == "__main__":
 
     # Ожидаемые различия — ориентир при ручной проверке результатов
     print(f"\n  Ожидаемый результат:")
-    print(f"    Все-таки       → 1 токен  (все три токенизатора)")
+    print(f"    Все-таки → native_ru/razdel: 1 токен | internal: 3 токена")
     print(f"    кружка-термос  → razdel: 1 токен | internal/native_ru: 3 токена")
     print(f"    какая-нибудь   → native_ru/razdel: 1 токен | internal: 3 токена")
     print(f"    кресло-качалка → razdel: 1 токен | internal/native_ru: 3 токена")
@@ -649,6 +646,13 @@ if __name__ == "__main__":
         print(f"    Токены: {forms}")
         last_tok = s["words"][-1]
         print(f"    Последний токен misc: {last_tok.get('misc')} (ожидается '_' у промежуточных)")
+
+    print(
+        "\n  ⚠️  ОГРАНИЧЕНИЕ internal/native_ru: start_char=0 для всех предложений.\n"
+        "      В razdel-пути start_char корректен (передаётся из sentenize).\n"
+        "      В internal/native_ru-пути каждое предложение парсится без\n"
+        "      исходного смещения — offset не передаётся в Modal."
+    )
 
     # Regression assertion: start_char "Москва" == 35 (после "Зло, которым пугаешь, не так зло. ")
     # Для internal-пути start_char всегда 0 (предложение изолировано) — это осознанное ограничение.
@@ -709,5 +713,12 @@ if __name__ == "__main__":
         for sentence in br:
             tokens_forms = [w["form"] for w in sentence["words"]]
             print(f"   Токены: {tokens_forms}")
+
+    # ── Regression: parse_batch с 1 текстом (razdel) ────────────────────
+    batch_one = parser.parse_batch([text_single], output_format="native", tokenizer="razdel")
+    assert isinstance(batch_one, list) and isinstance(batch_one[0], list), (
+        f"❌ parse_batch должен возвращать List[List], получено {type(batch_one[0])}"
+    )
+    print("✅ parse_batch single-text type regression PASSED")
 
     print(f"\n{'✅ ВСЕ ТЕСТЫ ЗАВЕРШЕНЫ':^72}")
