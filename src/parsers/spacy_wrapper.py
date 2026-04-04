@@ -156,7 +156,7 @@ class SpacyParser:
             raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
         sentences = list(sentenize(text))
         return [
-            [s.text for s in sentences[i : i + chunk_size]]
+            [s.text for s in sentences[i: i + chunk_size]]  # ✅ только текст
             for i in range(0, len(sentences), chunk_size)
         ]
 
