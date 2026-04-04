@@ -195,57 +195,250 @@ class SpacyService:
                 current_docs = [pipe(doc) for doc in current_docs]
         return current_docs
 
+    # @staticmethod
+    # def _format_native(doc, char_offset: int = 0) -> List[Dict[str, Any]]:
+    #     """
+    #     Полный нативный формат spaCy — все атрибуты токена.
+    #     char_offset: смещение начала текста в исходном документе.
+    #     Передаётся из parse_sentence_chunk для корректных start_char/end_char
+    #     относительно всего исходного текста (не только текущего предложения).
+    #     """
+    #     result = []
+    #     for sent in doc.sents:
+    #         sent_data = {
+    #             "text": sent.text,
+    #             "start_char": sent.start_char + char_offset,
+    #             "end_char": sent.end_char + char_offset,
+    #             "words": [],
+    #         }
+    #         sent_token_offset = sent.start  # индекс первого токена предложения в Doc
+    #         for token in sent:
+    #             word_dict = {
+    #                 # ── Позиция ─────────────────────────────────────────────
+    #                 "id": token.i - sent_token_offset + 1,
+    #                 "start_char": token.idx + char_offset,
+    #                 "end_char": token.idx + len(token.text) + char_offset,
+    #                 # ── Форма ───────────────────────────────────────────────
+    #                 "form": token.text,
+    #                 "norm": token.norm_,
+    #                 "lower": token.lower_,
+    #                 "shape": token.shape_,
+    #                 # ── Лемма и POS ─────────────────────────────────────────
+    #                 "lemma": token.lemma_,
+    #                 "upos": token.pos_,
+    #                 "xpos": token.tag_,
+    #                 "feats": str(token.morph) if token.morph.to_dict() else "_",
+    #                 # ── Синтаксис ───────────────────────────────────────────
+    #                 "head": (
+    #                     token.head.i - sent_token_offset + 1
+    #                     if token.head.i != token.i
+    #                     else 0
+    #                 ),
+    #                 "deprel": token.dep_,
+    #                 "n_lefts": token.n_lefts,
+    #                 "n_rights": token.n_rights,
+    #                 "children": [c.i - sent_token_offset + 1 for c in token.children],
+    #                 # ── Именованные сущности ────────────────────────────────
+    #                 "ent_type": token.ent_type_ or None,
+    #                 "ent_iob": token.ent_iob_ if token.ent_iob_ != "O" else None,
+    #                 # ── Метаданные ──────────────────────────────────────────
+    #                 "is_sent_start": token.is_sent_start,
+    #                 "whitespace": token.whitespace_,
+    #                 "misc": "SpaceAfter=No" if not token.whitespace_ else "_",
+    #                 # ── Лексические флаги ───────────────────────────────────
+    #                 "is_alpha": token.is_alpha,
+    #                 "is_digit": token.is_digit,
+    #                 "is_punct": token.is_punct,
+    #                 "is_space": token.is_space,
+    #                 "is_stop": token.is_stop,
+    #                 "is_oov": token.is_oov,
+    #                 "like_num": token.like_num,
+    #                 "like_url": token.like_url,
+    #                 "like_email": token.like_email,
+    #                 # ── Вектор ──────────────────────────────────────────────
+    #                 "has_vector": token.has_vector,
+    #                 "cluster": token.cluster,
+    #                 "vector_norm": (
+    #                     round(float(token.vector_norm), 6) if token.has_vector else None
+    #                 ),
+    #             }
+    #             sent_data["words"].append(word_dict)
+    #         ents = [
+    #             {
+    #                 "text": ent.text,
+    #                 "start": ent.start - sent.start,
+    #                 "end": ent.end - sent.start,
+    #                 "label": ent.label_,
+    #                 "start_char": ent.start_char + char_offset,
+    #                 "end_char": ent.end_char + char_offset,
+    #             }
+    #             for ent in sent.ents
+    #         ]
+    #         if ents:
+    #             sent_data["entities"] = ents
+    #         result.append(sent_data)
+    #     return result
+    #
+    # @staticmethod
+    # def format_native(doc, char_offset: int = 0) -> List[Dict[str, Any]]:
+    #     """
+    #     Форматирует spaCy Doc в List[SentenceDict].
+    #     Doc считается одним предложением — сентенизация уже выполнена снаружи
+    #     (razdel в wrapper или split_to_sentence_chunks).
+    #     Итерация по doc.sents намеренно не используется во избежание
+    #     рассинхронизации с внешней сентенизацией.
+    #
+    #     Args:
+    #         doc: spaCy Doc (одно предложение)
+    #         char_offset: смещение символов относительно исходного текста
+    #                      (передаётся из parse_sentence_chunk для razdel-пути)
+    #     Returns:
+    #         List с одним SentenceDict, или [] если doc пустой
+    #     """
+    #     tokens = list(doc)
+    #     if not tokens:
+    #         return []
+    #
+    #     words: List[Dict[str, Any]] = []
+    #     for token in tokens:
+    #         morph_str = str(token.morph) if token.morph.to_dict() else ""
+    #         word_dict: Dict[str, Any] = {
+    #             # Позиция в предложении (1-based, CoNLL-совместимо)
+    #             "id": token.i + 1,
+    #             "start_char": token.idx + char_offset,
+    #             "end_char": token.idx + len(token.text) + char_offset,
+    #             # Формы
+    #             "form": token.text,
+    #             "norm": token.norm_,
+    #             "lower": token.lower_,
+    #             "shape": token.shape_,
+    #             # Морфология
+    #             "lemma": token.lemma_,
+    #             "upos": token.pos_,
+    #             "xpos": token.tag_,
+    #             "feats": morph_str if morph_str else "_",   # "_" как в стандарте CoNLL-
+    #             # Синтаксис
+    #             # head=0 означает root (токен указывает на себя)
+    #             "head": token.head.i + 1 if token.head.i != token.i else 0,
+    #             "deprel": token.dep_,
+    #             "n_lefts": token.n_lefts,
+    #             "n_rights": token.n_rights,
+    #             "children": [c.i + 1 for c in token.children],
+    #             # NER
+    #             "ent_type": token.ent_type_ or None,
+    #             "ent_iob": token.ent_iob_ if token.ent_iob_ != "O" else None,
+    #             # Границы предложений
+    #             # Для первого токена всегда True (doc = одно предложение)
+    #             "is_sent_start": token.i == 0,
+    #             # Пробелы / CoNLL misc
+    #             "whitespace": token.whitespace_,
+    #             "misc": "SpaceAfter=No" if not token.whitespace_ else "_",
+    #             # Булевы флаги
+    #             "is_alpha": token.is_alpha,
+    #             "is_digit": token.is_digit,
+    #             "is_punct": token.is_punct,
+    #             "is_space": token.is_space,
+    #             "is_stop": token.is_stop,
+    #             "is_oov": token.is_oov,
+    #             "like_num": token.like_num,
+    #             "like_url": token.like_url,
+    #             "like_email": token.like_email,
+    #             # Векторы
+    #             "has_vector": token.has_vector,
+    #             "cluster": token.cluster,
+    #             "vector_norm": (
+    #                 round(float(token.vector_norm), 6) if token.has_vector else None
+    #             ),
+    #         }
+    #         words.append(word_dict)
+    #
+    #     # NER на уровне предложения — из doc.ents
+    #     entities: List[Dict[str, Any]] = [
+    #         {
+    #             "text": ent.text,
+    #             "start": ent.start,  # индекс первого токена сущности в doc
+    #             "end": ent.end,      # индекс после последнего токена
+    #             "label": ent.label_,
+    #             "start_char": ent.start_char + char_offset,
+    #             "end_char": ent.end_char + char_offset,
+    #         }
+    #         for ent in doc.ents
+    #     ]
+    #
+    #     sent_data: Dict[str, Any] = {
+    #         "text": doc.text,
+    #         "start_char": tokens[0].idx + char_offset,
+    #         "end_char": tokens[-1].idx + len(tokens[-1].text) + char_offset,
+    #         "words": words,
+    #         "entities": entities,
+    #     }
+    #     return [sent_data]
+
     @staticmethod
-    def _format_native(doc, char_offset: int = 0) -> List[Dict[str, Any]]:
+    def _format_native_doc(
+            doc,
+            char_offset: int = 0,
+            single_sentence: bool = True,
+    ) -> List[Dict[str, Any]]:
         """
-        Полный нативный формат spaCy — все атрибуты токена.
-        char_offset: смещение начала текста в исходном документе.
-        Передаётся из parse_sentence_chunk для корректных start_char/end_char
-        относительно всего исходного текста (не только текущего предложения).
+        single_sentence=True  → doc = одно предложение (production path)
+        single_sentence=False → doc = несколько предложений (parse / parse_batch)
         """
-        result = []
-        for sent in doc.sents:
-            sent_data = {
-                "text": sent.text,
-                "start_char": sent.start_char + char_offset,
-                "end_char": sent.end_char + char_offset,
-                "words": [],
-            }
-            sent_token_offset = sent.start  # индекс первого токена предложения в Doc
-            for token in sent:
-                word_dict = {
-                    # ── Позиция ─────────────────────────────────────────────
-                    "id": token.i - sent_token_offset + 1,
+        if single_sentence:
+            # текущая логика format_native
+            """
+                    Форматирует spaCy Doc в List[SentenceDict].
+                    Doc считается одним предложением — сентенизация уже выполнена снаружи
+                    (razdel в wrapper или split_to_sentence_chunks).
+                    Итерация по doc.sents намеренно не используется во избежание
+                    рассинхронизации с внешней сентенизацией.
+
+                    Args:
+                        doc: spaCy Doc (одно предложение)
+                        char_offset: смещение символов относительно исходного текста
+                                     (передаётся из parse_sentence_chunk для razdel-пути)
+                    Returns:
+                        List с одним SentenceDict, или [] если doc пустой
+                    """
+            tokens = list(doc)
+            if not tokens:
+                return []
+
+            words: List[Dict[str, Any]] = []
+            for token in tokens:
+                morph_str = str(token.morph) if token.morph.to_dict() else ""
+                word_dict: Dict[str, Any] = {
+                    # Позиция в предложении (1-based, CoNLL-совместимо)
+                    "id": token.i + 1,
                     "start_char": token.idx + char_offset,
                     "end_char": token.idx + len(token.text) + char_offset,
-                    # ── Форма ───────────────────────────────────────────────
+                    # Формы
                     "form": token.text,
                     "norm": token.norm_,
                     "lower": token.lower_,
                     "shape": token.shape_,
-                    # ── Лемма и POS ─────────────────────────────────────────
+                    # Морфология
                     "lemma": token.lemma_,
                     "upos": token.pos_,
                     "xpos": token.tag_,
-                    "feats": str(token.morph) if token.morph.to_dict() else "_",
-                    # ── Синтаксис ───────────────────────────────────────────
-                    "head": (
-                        token.head.i - sent_token_offset + 1
-                        if token.head.i != token.i
-                        else 0
-                    ),
+                    "feats": morph_str if morph_str else "_",  # "_" как в стандарте CoNLL-
+                    # Синтаксис
+                    # head=0 означает root (токен указывает на себя)
+                    "head": token.head.i + 1 if token.head.i != token.i else 0,
                     "deprel": token.dep_,
                     "n_lefts": token.n_lefts,
                     "n_rights": token.n_rights,
-                    "children": [c.i - sent_token_offset + 1 for c in token.children],
-                    # ── Именованные сущности ────────────────────────────────
+                    "children": [c.i + 1 for c in token.children],
+                    # NER
                     "ent_type": token.ent_type_ or None,
                     "ent_iob": token.ent_iob_ if token.ent_iob_ != "O" else None,
-                    # ── Метаданные ──────────────────────────────────────────
-                    "is_sent_start": token.is_sent_start,
+                    # Границы предложений
+                    # Для первого токена всегда True (doc = одно предложение)
+                    "is_sent_start": token.i == 0,
+                    # Пробелы / CoNLL misc
                     "whitespace": token.whitespace_,
                     "misc": "SpaceAfter=No" if not token.whitespace_ else "_",
-                    # ── Лексические флаги ───────────────────────────────────
+                    # Булевы флаги
                     "is_alpha": token.is_alpha,
                     "is_digit": token.is_digit,
                     "is_punct": token.is_punct,
@@ -255,124 +448,119 @@ class SpacyService:
                     "like_num": token.like_num,
                     "like_url": token.like_url,
                     "like_email": token.like_email,
-                    # ── Вектор ──────────────────────────────────────────────
+                    # Векторы
                     "has_vector": token.has_vector,
                     "cluster": token.cluster,
                     "vector_norm": (
                         round(float(token.vector_norm), 6) if token.has_vector else None
                     ),
                 }
-                sent_data["words"].append(word_dict)
-            ents = [
+                words.append(word_dict)
+
+            # NER на уровне предложения — из doc.ents
+            entities: List[Dict[str, Any]] = [
                 {
                     "text": ent.text,
-                    "start": ent.start - sent.start,
-                    "end": ent.end - sent.start,
+                    "start": ent.start,  # индекс первого токена сущности в doc
+                    "end": ent.end,  # индекс после последнего токена
                     "label": ent.label_,
                     "start_char": ent.start_char + char_offset,
                     "end_char": ent.end_char + char_offset,
                 }
-                for ent in sent.ents
+                for ent in doc.ents
             ]
-            if ents:
-                sent_data["entities"] = ents
-            result.append(sent_data)
-        return result
 
-    @staticmethod
-    def format_native(doc, char_offset: int = 0) -> List[Dict[str, Any]]:
-        """
-        Форматирует spaCy Doc в List[SentenceDict].
-        Doc считается одним предложением — сентенизация уже выполнена снаружи
-        (razdel в wrapper или split_to_sentence_chunks).
-        Итерация по doc.sents намеренно не используется во избежание
-        рассинхронизации с внешней сентенизацией.
-
-        Args:
-            doc: spaCy Doc (одно предложение)
-            char_offset: смещение символов относительно исходного текста
-                         (передаётся из parse_sentence_chunk для razdel-пути)
-        Returns:
-            List с одним SentenceDict, или [] если doc пустой
-        """
-        tokens = list(doc)
-        if not tokens:
-            return []
-
-        words: List[Dict[str, Any]] = []
-        for token in tokens:
-            morph_str = str(token.morph) if token.morph.to_dict() else ""
-            word_dict: Dict[str, Any] = {
-                # Позиция в предложении (1-based, CoNLL-совместимо)
-                "id": token.i + 1,
-                "start_char": token.idx + char_offset,
-                "end_char": token.idx + len(token.text) + char_offset,
-                # Формы
-                "form": token.text,
-                "norm": token.norm_,
-                "lower": token.lower_,
-                "shape": token.shape_,
-                # Морфология
-                "lemma": token.lemma_,
-                "upos": token.pos_,
-                "xpos": token.tag_,
-                "feats": morph_str if morph_str else "_",   # "_" как в стандарте CoNLL-
-                # Синтаксис
-                # head=0 означает root (токен указывает на себя)
-                "head": token.head.i + 1 if token.head.i != token.i else 0,
-                "deprel": token.dep_,
-                "n_lefts": token.n_lefts,
-                "n_rights": token.n_rights,
-                "children": [c.i + 1 for c in token.children],
-                # NER
-                "ent_type": token.ent_type_ or None,
-                "ent_iob": token.ent_iob_ if token.ent_iob_ != "O" else None,
-                # Границы предложений
-                # Для первого токена всегда True (doc = одно предложение)
-                "is_sent_start": token.i == 0,
-                # Пробелы / CoNLL misc
-                "whitespace": token.whitespace_,
-                "misc": "SpaceAfter=No" if not token.whitespace_ else "_",
-                # Булевы флаги
-                "is_alpha": token.is_alpha,
-                "is_digit": token.is_digit,
-                "is_punct": token.is_punct,
-                "is_space": token.is_space,
-                "is_stop": token.is_stop,
-                "is_oov": token.is_oov,
-                "like_num": token.like_num,
-                "like_url": token.like_url,
-                "like_email": token.like_email,
-                # Векторы
-                "has_vector": token.has_vector,
-                "cluster": token.cluster,
-                "vector_norm": (
-                    round(float(token.vector_norm), 6) if token.has_vector else None
-                ),
+            sent_data: Dict[str, Any] = {
+                "text": doc.text,
+                "start_char": tokens[0].idx + char_offset,
+                "end_char": tokens[-1].idx + len(tokens[-1].text) + char_offset,
+                "words": words,
+                "entities": entities,
             }
-            words.append(word_dict)
-
-        # NER на уровне предложения — из doc.ents
-        entities: List[Dict[str, Any]] = [
-            {
-                "text": ent.text,
-                "start": ent.start,  # индекс первого токена сущности в doc
-                "end": ent.end,      # индекс после последнего токена
-                "label": ent.label_,
-                "start_char": ent.start_char + char_offset,
-                "end_char": ent.end_char + char_offset,
-            }
-            for ent in doc.ents
-        ]
-
-        sent_data: Dict[str, Any] = {
-            "text": doc.text,
-            "start_char": tokens[0].idx + char_offset,
-            "end_char": tokens[-1].idx + len(tokens[-1].text) + char_offset,
-            "words": words,
-            "entities": entities,
-        }
-        return [sent_data]
+            return [sent_data]
+        else:
+            # текущая логика _format_native
+            """
+            Полный нативный формат spaCy — все атрибуты токена.
+            char_offset: смещение начала текста в исходном документе.
+            Передаётся из parse_sentence_chunk для корректных start_char/end_char
+            относительно всего исходного текста (не только текущего предложения).
+            """
+            result = []
+            for sent in doc.sents:
+                sent_data = {
+                    "text": sent.text,
+                    "start_char": sent.start_char + char_offset,
+                    "end_char": sent.end_char + char_offset,
+                    "words": [],
+                }
+                sent_token_offset = sent.start  # индекс первого токена предложения в Doc
+                for token in sent:
+                    word_dict = {
+                        # ── Позиция ─────────────────────────────────────────────
+                        "id": token.i - sent_token_offset + 1,
+                        "start_char": token.idx + char_offset,
+                        "end_char": token.idx + len(token.text) + char_offset,
+                        # ── Форма ───────────────────────────────────────────────
+                        "form": token.text,
+                        "norm": token.norm_,
+                        "lower": token.lower_,
+                        "shape": token.shape_,
+                        # ── Лемма и POS ─────────────────────────────────────────
+                        "lemma": token.lemma_,
+                        "upos": token.pos_,
+                        "xpos": token.tag_,
+                        "feats": str(token.morph) if token.morph.to_dict() else "_",
+                        # ── Синтаксис ───────────────────────────────────────────
+                        "head": (
+                            token.head.i - sent_token_offset + 1
+                            if token.head.i != token.i
+                            else 0
+                        ),
+                        "deprel": token.dep_,
+                        "n_lefts": token.n_lefts,
+                        "n_rights": token.n_rights,
+                        "children": [c.i - sent_token_offset + 1 for c in token.children],
+                        # ── Именованные сущности ────────────────────────────────
+                        "ent_type": token.ent_type_ or None,
+                        "ent_iob": token.ent_iob_ if token.ent_iob_ != "O" else None,
+                        # ── Метаданные ──────────────────────────────────────────
+                        "is_sent_start": token.is_sent_start,
+                        "whitespace": token.whitespace_,
+                        "misc": "SpaceAfter=No" if not token.whitespace_ else "_",
+                        # ── Лексические флаги ───────────────────────────────────
+                        "is_alpha": token.is_alpha,
+                        "is_digit": token.is_digit,
+                        "is_punct": token.is_punct,
+                        "is_space": token.is_space,
+                        "is_stop": token.is_stop,
+                        "is_oov": token.is_oov,
+                        "like_num": token.like_num,
+                        "like_url": token.like_url,
+                        "like_email": token.like_email,
+                        # ── Вектор ──────────────────────────────────────────────
+                        "has_vector": token.has_vector,
+                        "cluster": token.cluster,
+                        "vector_norm": (
+                            round(float(token.vector_norm), 6) if token.has_vector else None
+                        ),
+                    }
+                    sent_data["words"].append(word_dict)
+                ents = [
+                    {
+                        "text": ent.text,
+                        "start": ent.start - sent.start,
+                        "end": ent.end - sent.start,
+                        "label": ent.label_,
+                        "start_char": ent.start_char + char_offset,
+                        "end_char": ent.end_char + char_offset,
+                    }
+                    for ent in sent.ents
+                ]
+                if ents:
+                    sent_data["entities"] = ents
+                result.append(sent_data)
+            return result
 
     @staticmethod
     def _format_conllu(doc) -> str:
@@ -415,20 +603,20 @@ class SpacyService:
             ) + "\n"
         result = []
         for doc, char_offset in zip(docs, char_offsets):
-            result.extend(self.format_native(doc, char_offset=char_offset))
+            result.extend(self._format_native_doc(doc, char_offset=char_offset))
         return result
 
     @modal.method()
     def parse_sentence_chunk_native(
         self,
-        sentences: List[Tuple[str, int]],  # ← (text, start_char)
+        sentences: List[str],   # тексты предложений чанка (без офсетов
         output_format: str = "native",
         batch_size: int = 32,
         # [native_ru] Добавлен параметр tokenizer.
         # Значение по умолчанию "internal" сохраняет обратную совместимость:
         # существующие вызовы из wrapper без явного tokenizer продолжают работать.
         # Допустимые значения: "internal" | "native_ru"
-        tokenizer: str = "internal",
+        tokenizer: TokenizerType = "internal",  # "internal" | "native_ru"
     ) -> Any:
         """
         Internal / native_ru path.
@@ -447,6 +635,11 @@ class SpacyService:
         # [native_ru] tokenizer пробрасывается в _make_doc:
         #   "internal"  → self.original_tokenizer(text) (spaCy rule-based)
         #   "native_ru" → original_tokenizer + ru_tokenizer_component (мёрж паттернов)
+        if tokenizer not in ("internal", "native_ru"):
+            raise ValueError(
+                f"parse_sentence_chunk_native: tokenizer must be "
+                f"'internal' or 'native_ru', got {tokenizer!r}"
+            )
         docs = [self._make_doc(s, tokenizer) for s in sentences]
         docs = self._run_pipeline_batch(docs, batch_size=batch_size)
         if output_format == "conllu":
@@ -464,7 +657,7 @@ class SpacyService:
             # к позиции в исходном тексте (в отличие от razdel-пути, где
             # start_char передаётся явно через List[Tuple[str, int]])
 
-            result.extend(self.format_native(doc, char_offset=0))
+            result.extend(self._format_native_doc(doc, char_offset=0))
         return result
 
     # ─── Backward compat / local_entrypoint ─────────────────────────────────
@@ -480,7 +673,7 @@ class SpacyService:
         doc = self._run_pipeline(doc)
         if output_format == "conllu":
             return self._format_conllu(doc)
-        return self._format_native(doc)
+        return self._format_native_doc(doc, single_sentence=False)
 
     @modal.method()
     def parse_batch(
@@ -495,7 +688,7 @@ class SpacyService:
         docs = self._run_pipeline_batch(docs, batch_size)
         if output_format == "conllu":
             return [self._format_conllu(doc) for doc in docs]
-        return [self._format_native(doc) for doc in docs]
+        return [self._format_native_doc(doc, single_sentence=False) for doc in docs]
 
 
 # ─── Вспомогательная функция вывода ──────────────────────────────────────────
@@ -622,6 +815,9 @@ def main():
     result_cmp_int = service.parse.remote(text_compare, "native", "internal")
     result_cmp_rz = service.parse.remote(text_compare, "native", "razdel")
     result_cmp_nru = service.parse.remote(text_compare, "native", "native_ru")
+    print(f"\n{sep}")
+    print("ВАРИАНТ 2b: СРАВНЕНИЕ ВСЕХ ТРЁХ ТОКЕНИЗАТОРОВ")
+    print(sep)
     _print_comparison(text_compare, {
         "internal": result_cmp_int,
         "razdel": result_cmp_rz,
@@ -678,8 +874,9 @@ def main():
 
     # ── 7. NATIVE + NATIVE_RU (parse.remote) ─────────────────────────────
     # [native_ru] Тест нового токенизатора native_ru через parse.remote.
-    # Ключевая проверка: дефисные конструкции ("Кружка-термос") должны
-    # остаться единым токеном, а не разбиваться на 3 части как в "internal".
+    # Проверка: 'Все-таки' и 'какая-нибудь' → 1 токен (только native_ru/razdel).
+    # 'Кружка-термос' → 3 токена (как и internal): MERGE_PATTERNS не содержит
+    # паттерна Noun-Noun (только частицы и местоимения из SynTagRus).
     print(f"\n{sep}")
     print("7. NATIVE + NATIVE_RU (parse.remote)  [native_ru]")
     print(sep)

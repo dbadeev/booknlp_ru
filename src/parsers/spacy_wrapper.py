@@ -275,6 +275,10 @@ class SpacyParser:
                     all_chunks.extend(text_chunks)
                 if not all_chunks:
                     return [[] if output_format == "native" else "" for _ in texts]
+                if len(all_chunks) == 1:
+                    return self.service.parse_sentence_chunk.remote(
+                        all_chunks[0], output_format=output_format
+                    )
                 all_results = list(
                     self.service.parse_sentence_chunk.map(
                         all_chunks, kwargs={"output_format": output_format}
