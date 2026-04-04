@@ -222,7 +222,7 @@ class SpacyParser:
                 # Оба используют _split_to_sentence_chunks (без абсолютных офсетов).
                 # Значение tokenizer передаётся в Modal через kwargs, чтобы
                 # parse_sentence_chunk_native направил его в _make_doc.
-                chunks = self._split_to_sentence_chunks(text, chunk_size)
+                chunks = self._split_to_chunks(text, chunk_size)
                 if not chunks:
                     return [] if output_format == "native" else ""
                 if len(chunks) == 1:
@@ -286,7 +286,7 @@ class SpacyParser:
                 # чтобы parse_sentence_chunk_native применил нужный _make_doc.
                 all_chunks_native: List[List[str]] = []
                 for text in texts:
-                    text_chunks = self._split_to_sentence_chunks(text, chunk_size)
+                    text_chunks = self._split_to_chunks(text, chunk_size)
                     chunks_per_text.append(len(text_chunks))
                     all_chunks_native.extend(text_chunks)
                 if not all_chunks_native:
@@ -362,6 +362,16 @@ def _print_token_full(tok: TokenDict) -> None:
     vn = tok.get("vector_norm")
     print(f"    vector_norm:     {vn if vn is not None else '—'}")
 
+# ─── Утилита: вывод строки сравнения токенизаторов ──────────────────────────
+def _print_comparison(text: str, results: Dict[str, Any]) -> None:
+    """
+    Выводит 3-строчный блок сравнения токенизаторов.
+    results: {"internal": result, "razdel": result, "native_ru": result}
+    """
+    print(f"\n⚡ Сравнение всех трёх токенизаторов для: '{text}'")
+    for name, res in results.items():
+        forms = [w["form"] for s in res for w in s["words"]]
+        print(f"   {name:<10}: {forms}")
 
 # ─── Константа заголовка CoNLL-U ─────────────────────────────────────────────
 CONLLU_HEADER = "# ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
@@ -423,10 +433,9 @@ if __name__ == "__main__":
         "Кружка-термос стоит 500р."
     )
     # [native_ru] Текст с дефисными конструкциями для теста native_ru.
-    text_hyphen = (
-        "Суп-харчо — фирменное блюдо ресторана. "
-        "Бизнес-ланч стоит 500р. "
-        "Всё-таки очень хорошо."
+    text_compare = (
+        "Все-таки кружка-термос стоит 500р., "
+        "а какая-нибудь кресло-качалка 10 000р."
     )
 
     # ── Вариант 1: NATIVE + INTERNAL ──────────────────────────────────────
@@ -476,6 +485,16 @@ if __name__ == "__main__":
         for token in sentence["words"]:
             _print_token_full(token)
 
+    # ── 2b. — 3-way сравнение через parse.remote ─────────────────────────────────────────────
+    result_cmp_int = parser.parse_text(text_compare, "native", "internal")
+    result_cmp_rz = parser.parse_text(text_compare, "native", "razdel")
+    result_cmp_nru = parser.parse_text(text_compare, "native", "native_ru")
+    _print_comparison(text_compare, {
+        "internal": result_cmp_int,
+        "razdel": result_cmp_rz,
+        "native_ru": result_cmp_nru,
+    })
+
     # ── Вариант 3: CONLL-U + INTERNAL ─────────────────────────────────────
     print(f"\n{sep}")
     print("ВАРИАНТ 3: CONLL-U + INTERNAL TOKENIZER")
@@ -504,31 +523,36 @@ if __name__ == "__main__":
         ),
     )
 
-    # ── Вариант 5: NATIVE + NATIVE_RU ─────────────────────────────────────
-    # [native_ru] Тест токенизатора native_ru через wrapper.
-    # Проверяет полный путь: wrapper → Modal RPC → _make_doc("native_ru").
-    # Ключевое: дефисные конструкции должны быть единым токеном.
+    # ── Вариант 5: NATIVE + NATIVE_RU  [native_ru] ──────────────────────────
+    # ⚡ Полное сравнение всех трёх токенизаторов на text_compare
     print(f"\n{sep}")
     print("ВАРИАНТ 5: NATIVE + NATIVE_RU TOKENIZER  [native_ru]")
     print(sep)
-    result_nru = parser.parse_text(
-        text_hyphen,
-        output_format="native",
-        tokenizer="native_ru",
-        chunk_size=args.chunk_size,
-    )
-    print(f"\n⚡ Сравнение токенизаторов для текста с дефисами: '{text_hyphen}'")
-    nru_sents = cast(List[Dict[str, Any]], result_nru)
-    # Для сравнения запрашиваем internal на том же тексте
-    result_ni_h = parser.parse_text(
-        text_hyphen, output_format="native", tokenizer="internal",
-        chunk_size=args.chunk_size,
-    )
-    ni_h_sents = cast(List[Dict[str, Any]], result_ni_h)
-    print(f"  internal:  {[w['form'] for s in ni_h_sents for w in s['words']]}")
-    print(f"  native_ru: {[w['form'] for s in nru_sents  for w in s['words']]}")
-    print(f"\n  Ожидаемый результат: 'Суп-харчо', 'Бизнес-ланч', 'Всё-таки' — единые токены")
-    for sentence in result_nru:
+
+    # Результаты для text_compare уже получены в Варианте 2b — переиспользуем.
+    # cast() только для аннотации типа, не меняет данные во время выполнения.
+    nru_sents  = cast(List[Dict[str, Any]], result_cmp_nru)
+    ni_c_sents = cast(List[Dict[str, Any]], result_cmp_int)
+    rz_c_sents = cast(List[Dict[str, Any]], result_cmp_rz)
+
+    # 3-строчный блок сравнения: форм-списки для всех трёх токенизаторов
+    _print_comparison(text_compare, {
+        "internal":  ni_c_sents,
+        "razdel":    rz_c_sents,
+        "native_ru": nru_sents,
+    })
+
+    # Ожидаемые различия — ориентир при ручной проверке результатов
+    print(f"\n  Ожидаемый результат:")
+    print(f"    Все-таки       → 1 токен  (все три токенизатора)")
+    print(f"    кружка-термос  → razdel: 1 токен | internal/native_ru: 3 токена")
+    print(f"    какая-нибудь   → native_ru/razdel: 1 токен | internal: 3 токена")
+    print(f"    кресло-качалка → razdel: 1 токен | internal/native_ru: 3 токена")
+    print(f"    10 000р.       → разбивка числа и единицы зависит от токенизатора")
+
+    # Детальный вывод всех атрибутов токенов native_ru для text_compare
+    print(f"\n--- Детальный вывод (native_ru, '{text_compare}') ---")
+    for sentence in nru_sents:
         sentence: SentenceDict
         print(
             f"\nПредложение: '{sentence['text']}' "
@@ -545,9 +569,9 @@ if __name__ == "__main__":
     print("ВАРИАНТ 6: CONLL-U + NATIVE_RU TOKENIZER  [native_ru]")
     print(sep)
     _print_conllu(
-        text_hyphen,
+        text_compare,
         parser.parse_text(
-            text_hyphen,
+            text_compare,
             output_format="conllu",
             tokenizer="native_ru",
             chunk_size=args.chunk_size,
@@ -576,7 +600,7 @@ if __name__ == "__main__":
     print(f"\n{sep}")
     print("BATCH: NATIVE + NATIVE_RU (2 текста)  [native_ru]")
     print(sep)
-    batch_texts_nru = [text_single, text_hyphen]
+    batch_texts_nru = [text_single, text_compare]
     batch_results_nru = parser.parse_batch(
         batch_texts_nru,
         output_format="native",

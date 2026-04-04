@@ -87,21 +87,9 @@ class SpacyService:
         # noinspection DuplicatedCode
         self.razdel_tokenizer = RazdelTokenizer(self.nlp.vocab)
 
-        # # [native_ru] Инициализация компонента spacy_russian_tokenizer.
-        # # RussianTokenizer мёржит дефисные конструкции по правилам SynTagRus
-        # # ("бизнес-ланч", "всё-таки", "Кружка-термос" → единый токен).
-        # # Вызывается вручную в _make_doc, а не через nlp.add_pipe — это
-        # # позволяет не нарушать порядок компонентов spaCy v3 pipeline и
-        # # применять мёрж только при tokenizer="native_ru".
-        # from spacy_russian_tokenizer import (
-        #     RussianTokenizer,
-        #     MERGE_PATTERNS,
-        #     SYNTAGRUS_RARE_CASES,
-        # )
-        # self.ru_tokenizer_component = RussianTokenizer(
-        #     self.nlp,
-        #     MERGE_PATTERNS + SYNTAGRUS_RARE_CASES,
-        # )
+        # [native_ru] Инициализация компонента spacy_russian_tokenizer.
+        # Используется собственный _RuMatcher (совместим с spaCy v3 API):
+        # RussianTokenizer из библиотеки использует устаревший v2 API.
 
         from spacy.matcher import Matcher as SpacyMatcher
         from spacy.util import filter_spans
@@ -328,13 +316,13 @@ class SpacyService:
                 "lemma": token.lemma_,
                 "upos": token.pos_,
                 "xpos": token.tag_,
-                "feats": morph_str,
+                "feats": morph_str if morph_str else "_",   # "_" как в стандарте CoNLL-
                 # Синтаксис
                 # head=0 означает root (токен указывает на себя)
                 "head": token.head.i + 1 if token.head.i != token.i else 0,
                 "deprel": token.dep_,
-                "nlefts": token.n_lefts,
-                "nrights": token.n_rights,
+                "n_lefts": token.n_lefts,
+                "n_rights": token.n_rights,
                 "children": [c.i + 1 for c in token.children],
                 # NER
                 "ent_type": token.ent_type_ or None,
@@ -344,7 +332,7 @@ class SpacyService:
                 "is_sent_start": token.i == 0,
                 # Пробелы / CoNLL misc
                 "whitespace": token.whitespace_,
-                "misc": "SpaceAfter=No" if not token.whitespace_ else "",
+                "misc": "SpaceAfter=No" if not token.whitespace_ else "_",
                 # Булевы флаги
                 "is_alpha": token.is_alpha,
                 "is_digit": token.is_digit,
@@ -433,7 +421,7 @@ class SpacyService:
     @modal.method()
     def parse_sentence_chunk_native(
         self,
-        sentences: List[str],
+        sentences: List[Tuple[str, int]],  # ← (text, start_char)
         output_format: str = "native",
         batch_size: int = 32,
         # [native_ru] Добавлен параметр tokenizer.
@@ -471,7 +459,7 @@ class SpacyService:
             # char_offset=0: native/native_ru путь получает уже разбитые предложения
             # без информации об исходных смещениях — это осознанное ограничение.
             # start_char/end_char токенов будут относительны начала каждого предложения.
-            result.extend(self.format_native(doc, char_offset=0))
+            result.extend(self.format_native(doc, char_offset=char_offset))  # ← передаём offset
         return result
 
     # ─── Backward compat / local_entrypoint ─────────────────────────────────
@@ -555,6 +543,17 @@ def _print_token_full(tok: Dict[str, Any]) -> None:
 # ─── Константа заголовка CoNLL-U ─────────────────────────────────────────────
 CONLLU_HEADER = "# ID\tFORM\tLEMMA\tUPOS\tXPOS\tFEATS\tHEAD\tDEPREL\tDEPS\tMISC"
 
+# ─── Утилита: вывод строки сравнения токенизаторов ──────────────────────────
+def _print_comparison(text: str, results: Dict[str, Any]) -> None:
+    """
+    Выводит 3-строчный блок сравнения токенизаторов.
+    results: {"internal": result, "razdel": result, "native_ru": result}
+    """
+    print(f"\n⚡ Сравнение всех трёх токенизаторов для: '{text}'")
+    for name, res in results.items():
+        forms = [w["form"] for s in res for w in s["words"]]
+        print(f"   {name:<10}: {forms}")
+
 
 def _print_conllu(text: str, conllu: str) -> None:
     """Выводит CoNLL-U блок с текстом предложения и заголовком столбцов."""
@@ -585,6 +584,10 @@ def main():
     service = SpacyService()
     text_single = "Кружка-термос стоит 500р."
     text_multi = "Зло, которым пугаешь, не так зло. Москва — столица России."
+    text_compare = (
+        "Все-таки кружка-термос стоит 500р., "
+        "а какая-нибудь кресло-качалка 10 000р."
+    )
     sep = "=" * 72
 
     # ── 1. NATIVE + INTERNAL ──────────────────────────────────────────────
@@ -609,6 +612,16 @@ def main():
         print(f"\nПредложение: '{sent['text']}'")
         for tok in sent["words"]:
             _print_token_full(tok)
+
+    # ── 2b. — 3-way сравнение через parse.remote ─────────────────────────────────────────────
+    result_cmp_int = service.parse.remote(text_compare, "native", "internal")
+    result_cmp_rz = service.parse.remote(text_compare, "native", "razdel")
+    result_cmp_nru = service.parse.remote(text_compare, "native", "native_ru")
+    _print_comparison(text_compare, {
+        "internal": result_cmp_int,
+        "razdel": result_cmp_rz,
+        "native_ru": result_cmp_nru,
+    })
 
     # ── 3. CONLL-U + INTERNAL ─────────────────────────────────────────────
     print(f"\n{sep}")
@@ -690,34 +703,42 @@ def main():
     )
     _print_conllu(text_multi, result_conllu_nru)
 
-    # ── 9. parse_sentence_chunk_native — native_ru path (production method) ─
-    # [native_ru] Тест production-метода parse_sentence_chunk_native с
-    # tokenizer="native_ru". Проверяет корректность передачи параметра
-    # tokenizer через Modal RPC в _make_doc. Используется текст с несколькими
-    # дефисными конструкциями для наглядного сравнения с "internal".
+    # ── 9. parse_sentence_chunk_native — native_ru path  [native_ru] ─────────
+    # ⚡ Полное сравнение всех трёх токенизаторов на pre-split чанке
     print(f"\n{sep}")
     print("9. parse_sentence_chunk_native (native_ru path)  [native_ru]")
     print(sep)
-    text_hyphen = (
-        "Суп-харчо — фирменное блюдо. "
-        "Бизнес-ланч стоит 500р. "
-        "Всё-таки хорошо."
-    )
-    sentences_h = list(sentenize(text_hyphen))
-    chunk_nru = [s.text for s in sentences_h]
-    print(f"Чанк ({len(chunk_nru)} предложений): {chunk_nru}")
 
+    # Сентенизация text_compare — то же самое, что делает wrapper перед отправкой в Modal.
+    # sentences_c: List[razdel.Substring] → .text (str) и .start (int, офсет в тексте)
+    sentences_c = list(sentenize(text_compare))
+    chunk_c_texts = [s.text for s in sentences_c]  # для internal / native_ru path
+    chunk_c_offs = [(s.text, s.start) for s in sentences_c]  # для razdel path (нужны офсеты)
+
+    print(f"Чанк ({len(chunk_c_texts)} предложений): {chunk_c_texts}")
+
+    # Три параллельных вызова production-методов с одинаковыми предложениями.
+    # parse_sentence_chunk_native принимает List[str] + tokenizer=
+    # parse_sentence_chunk        принимает List[(str, int)] — razdel path
     result_nru_chunk = service.parse_sentence_chunk_native.remote(
-        chunk_nru, output_format="native", tokenizer="native_ru"
+        chunk_c_texts, output_format="native", tokenizer="native_ru"
     )
     result_int_chunk = service.parse_sentence_chunk_native.remote(
-        chunk_nru, output_format="native", tokenizer="internal"
+        chunk_c_texts, output_format="native", tokenizer="internal"
+    )
+    result_rz_chunk = service.parse_sentence_chunk.remote(
+        chunk_c_offs, output_format="native"
     )
 
-    print(f"\n⚡ Сравнение токенизации дефисных конструкций:")
-    for i, (s_nru, s_int) in enumerate(zip(result_nru_chunk, result_int_chunk), 1):
-        print(f"\n  Предложение {i}: '{s_nru['text']}'")
+    # zip по трём результатам — i-й элемент соответствует i-му предложению чанка
+    print(f"\n⚡ Сравнение токенизации дефисных конструкций (pre-split chunk):")
+    for i, (s_int, s_rz, s_nru) in enumerate(
+            zip(result_int_chunk, result_rz_chunk, result_nru_chunk), 1
+    ):
+        print(f"\n  Предложение {i}: '{s_int['text']}'")
         print(f"    internal:  {[w['form'] for w in s_int['words']]}")
+        print(f"    razdel:    {[w['form'] for w in s_rz['words']]}")
         print(f"    native_ru: {[w['form'] for w in s_nru['words']]}")
+
 
     print(f"\n{'✅ Тестирование завершено!':^72}")
