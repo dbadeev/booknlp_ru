@@ -459,7 +459,12 @@ class SpacyService:
             # char_offset=0: native/native_ru путь получает уже разбитые предложения
             # без информации об исходных смещениях — это осознанное ограничение.
             # start_char/end_char токенов будут относительны начала каждого предложения.
-            result.extend(self.format_native(doc, char_offset=char_offset))  # ← передаём offset
+            # ← offset всегда 0, потому что каждое предложение
+            # передаётся в Modal уже выделенным строковым фрагментом без привязки
+            # к позиции в исходном тексте (в отличие от razdel-пути, где
+            # start_char передаётся явно через List[Tuple[str, int]])
+
+            result.extend(self.format_native(doc, char_offset=0))
         return result
 
     # ─── Backward compat / local_entrypoint ─────────────────────────────────
