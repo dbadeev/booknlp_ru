@@ -222,7 +222,7 @@ class SpacyParser:
                 # Оба используют _split_to_sentence_chunks (без абсолютных офсетов).
                 # Значение tokenizer передаётся в Modal через kwargs, чтобы
                 # parse_sentence_chunk_native направил его в _make_doc.
-                chunks = self._split_to_chunks(text, chunk_size)
+                chunks = self._split_to_sentence_chunks(text, chunk_size)
                 if not chunks:
                     return [] if output_format == "native" else ""
                 if len(chunks) == 1:
@@ -286,7 +286,7 @@ class SpacyParser:
                 # чтобы parse_sentence_chunk_native применил нужный _make_doc.
                 all_chunks_native: List[List[str]] = []
                 for text in texts:
-                    text_chunks = self._split_to_chunks(text, chunk_size)
+                    text_chunks = self._split_to_sentence_chunks(text, chunk_size)
                     chunks_per_text.append(len(text_chunks))
                     all_chunks_native.extend(text_chunks)
                 if not all_chunks_native:
