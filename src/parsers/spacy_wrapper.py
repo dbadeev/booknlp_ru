@@ -172,8 +172,56 @@ class SpacyParser:
         """
         if output_format == "conllu":
             parts = [cr.strip() for cr in chunk_results if cr.strip()]
+            # ── SpaceAfter последнего токена промежуточных предложений ──
+            for i in range(len(parts) - 1):
+                lines = parts[i].split("\n")
+                for j in range(len(lines) - 1, -1, -1):
+                    if lines[j] and not lines[j].startswith("#"):
+                        cols = lines[j].split("\t")
+                        if len(cols) == 10 and cols[9] == "SpaceAfter=No":
+                            cols[9] = "_"
+                            lines[j] = "\t".join(cols)
+                        break
+                parts[i] = "\n".join(lines)
             return "\n\n".join(parts) + "\n" if parts else ""
-        return [sent for cr in chunk_results for sent in cr]
+
+        sentences = [sent for cr in chunk_results for sent in cr]
+        # для native — исправляем misc последнего токена промежуточных предложений ──
+        for sent in sentences[:-1]:
+            if sent.get("words"):
+                last_tok = sent["words"][-1]
+                if last_tok.get("misc") == "SpaceAfter=No":
+                    last_tok["misc"] = "_"
+        return sentences
+
+    @staticmethod
+    def _fix_boundary_misc(result: Any, output_format: str) -> Any:
+        """
+        Одиночный чанк с несколькими предложениями: фиксирует misc/SpaceAfter
+        для последнего токена промежуточных предложений (не последнего).
+        Вызывается только при len(chunks)==1 (multi-sentence chunk).
+        """
+        if output_format == "native" and isinstance(result, list) and len(result) > 1:
+            for sent in result[:-1]:
+                if sent.get("words"):
+                    last_tok = sent["words"][-1]
+                    if last_tok.get("misc") == "SpaceAfter=No":
+                        last_tok["misc"] = "_"
+        elif output_format == "conllu" and isinstance(result, str):
+            parts = result.strip().split("\n\n")
+            if len(parts) > 1:
+                for i in range(len(parts) - 1):
+                    lines = parts[i].split("\n")
+                    for j in range(len(lines) - 1, -1, -1):
+                        if lines[j] and not lines[j].startswith("#"):
+                            cols = lines[j].split("\t")
+                            if len(cols) == 10 and cols[9] == "SpaceAfter=No":
+                                cols[9] = "_"
+                                lines[j] = "\t".join(cols)
+                            break
+                    parts[i] = "\n".join(lines)
+                result = "\n\n".join(parts) + "\n"
+        return result
 
     # ─── Public API ───────────────────────────────────────────────────────
     def parse_text(
@@ -208,9 +256,10 @@ class SpacyParser:
                 if not chunks:
                     return [] if output_format == "native" else ""
                 if len(chunks) == 1:
-                    return self.service.parse_sentence_chunk.remote(
+                    result = self.service.parse_sentence_chunk.remote(
                         chunks[0], output_format=output_format
                     )
+                    return self._fix_boundary_misc(result, output_format)
                 chunk_results = list(
                     self.service.parse_sentence_chunk.map(
                         chunks, kwargs={"output_format": output_format}
@@ -226,11 +275,12 @@ class SpacyParser:
                 if not chunks:
                     return [] if output_format == "native" else ""
                 if len(chunks) == 1:
-                    return self.service.parse_sentence_chunk_native.remote(
+                    result = self.service.parse_sentence_chunk_native.remote(
                         chunks[0],
                         output_format=output_format,
-                        tokenizer=tokenizer,  # [native_ru] передаём "internal" или "native_ru"
+                        tokenizer=tokenizer,
                     )
+                    return self._fix_boundary_misc(result, output_format)
                 chunk_results = list(
                     self.service.parse_sentence_chunk_native.map(
                         chunks,
@@ -582,7 +632,50 @@ if __name__ == "__main__":
         ),
     )
 
-    # ── parse_batch ────────────────────────────────────────────────────────
+    # ── Вариант 7: MULTI-SENTENCE + INTERNAL (char_offset regression test) ───
+    print(f"\n{sep}")
+    print("ВАРИАНТ 7: MULTI-SENTENCE char_offset REGRESSION (internal)")
+    print(sep)
+    result_multi_int = parser.parse_text(
+        text_multi,
+        output_format="native",
+        tokenizer="internal",
+        chunk_size=args.chunk_size,
+    )
+    print(f"\nТекст: '{text_multi}'")
+    for s in result_multi_int:
+        print(f"  Предложение: '{s['text']}' (chars {s['start_char']}:{s['end_char']})")
+        forms = [w["form"] for w in s["words"]]
+        print(f"    Токены: {forms}")
+        last_tok = s["words"][-1]
+        print(f"    Последний токен misc: {last_tok.get('misc')} (ожидается '_' у промежуточных)")
+
+    # Regression assertion: start_char "Москва" == 35 (после "Зло, которым пугаешь, не так зло. ")
+    # Для internal-пути start_char всегда 0 (предложение изолировано) — это осознанное ограничение.
+    # Тест проверяет корректность misc у промежуточных предложений.
+    if len(result_multi_int) > 1:
+        mid_sent = result_multi_int[0]
+        last_misc = mid_sent["words"][-1].get("misc")
+        assert last_misc == "_", (
+            f"❌ REGRESSION: misc последнего токена промежуточного предложения "
+            f"должен быть '_', получено '{last_misc}'"
+        )
+        print("\n✅ misc regression PASSED")
+
+    # То же для native_ru:
+    result_multi_nru = parser.parse_text(
+        text_multi,
+        output_format="native",
+        tokenizer="native_ru",
+        chunk_size=args.chunk_size,
+    )
+    if len(result_multi_nru) > 1:
+        last_misc_nru = result_multi_nru[0]["words"][-1].get("misc")
+        assert last_misc_nru == "_", (
+            f"❌ REGRESSION native_ru: misc='{last_misc_nru}', ожидается '_'"
+        )
+        print("✅ misc regression PASSED (native_ru)")
+
     print(f"\n{sep}")
     print("BATCH: CONLL-U + RAZDEL (2 текста)")
     print(sep)

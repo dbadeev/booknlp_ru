@@ -877,6 +877,9 @@ def main():
     # Проверка: 'Все-таки' и 'какая-нибудь' → 1 токен (только native_ru/razdel).
     # 'Кружка-термос' → 3 токена (как и internal): MERGE_PATTERNS не содержит
     # паттерна Noun-Noun (только частицы и местоимения из SynTagRus).
+    # native_ru НЕ мержит Noun-Noun конструкции ('кружка-термос', 'кресло-качалка').
+    # Мержатся только паттерны из SYNTAGRUS: частицы ('все-таки'),
+    # местоимения ('какая-нибудь') и аналогичные.
     print(f"\n{sep}")
     print("7. NATIVE + NATIVE_RU (parse.remote)  [native_ru]")
     print(sep)
@@ -887,7 +890,7 @@ def main():
     print(f"   internal:  {[w['form'] for s in result   for w in s['words']]}")
     print(f"   razdel:    {[w['form'] for s in result_r for w in s['words']]}")
     print(f"   native_ru: {[w['form'] for s in result_nru for w in s['words']]}")
-    print(f"\n   Ожидаемый результат native_ru: 'Кружка-термос' — единый токен")
+    print(f"\n   Ожидаемый результат native_ru (ошибка): 'Кружка-термос' — 3 токена (как и internal)")
     for sent in result_nru:
         print(f"\nПредложение: '{sent['text']}'")
         for tok in sent["words"]:
@@ -905,42 +908,52 @@ def main():
     )
     _print_conllu(text_multi, result_conllu_nru)
 
-    # ── 9. parse_sentence_chunk_native — native_ru path  [native_ru] ─────────
-    # ⚡ Полное сравнение всех трёх токенизаторов на pre-split чанке
+    # ── 9. parse_sentence_chunk_native — native_ru path [native_ru] ──────────
     print(f"\n{sep}")
-    print("9. parse_sentence_chunk_native (native_ru path)  [native_ru]")
+    print("9. parse_sentence_chunk_native (native_ru path) [native_ru]")
     print(sep)
 
-    # Сентенизация text_compare — то же самое, что делает wrapper перед отправкой в Modal.
-    # sentences_c: List[razdel.Substring] → .text (str) и .start (int, офсет в тексте)
-    sentences_c = list(sentenize(text_compare))
-    chunk_c_texts = [s.text for s in sentences_c]  # для internal / native_ru path
-    chunk_c_offs = [(s.text, s.start) for s in sentences_c]  # для razdel path (нужны офсеты)
-
-    print(f"Чанк ({len(chunk_c_texts)} предложений): {chunk_c_texts}")
-
-    # Три параллельных вызова production-методов с одинаковыми предложениями.
-    # parse_sentence_chunk_native принимает List[str] + tokenizer=
-    # parse_sentence_chunk        принимает List[(str, int)] — razdel path
-    result_nru_chunk = service.parse_sentence_chunk_native.remote(
-        chunk_c_texts, output_format="native", tokenizer="native_ru"
+    # Двухпредложный чанк: проверяет и дефисные конструкции, и сборку нескольких предложений.
+    text_chunk9 = (
+        "Все-таки кружка-термос стоит 500р., а какая-нибудь кресло-качалка 10 000р. "
+        "Москва — столица России."
     )
-    result_int_chunk = service.parse_sentence_chunk_native.remote(
-        chunk_c_texts, output_format="native", tokenizer="internal"
+    sentences_9 = list(sentenize(text_chunk9))
+    chunk_9_texts = [s.text for s in sentences_9]  # internal / native_ru path
+    chunk_9_offs = [(s.text, s.start) for s in sentences_9]  # razdel path (офсеты)
+
+    print(f"Чанк ({len(chunk_9_texts)} предложений): {chunk_9_texts}")
+
+    result_nru_9 = service.parse_sentence_chunk_native.remote(
+        chunk_9_texts, output_format="native", tokenizer="native_ru"
     )
-    result_rz_chunk = service.parse_sentence_chunk.remote(
-        chunk_c_offs, output_format="native"
+    result_int_9 = service.parse_sentence_chunk_native.remote(
+        chunk_9_texts, output_format="native", tokenizer="internal"
+    )
+    result_rz_9 = service.parse_sentence_chunk.remote(
+        chunk_9_offs, output_format="native"
     )
 
-    # zip по трём результатам — i-й элемент соответствует i-му предложению чанка
-    print(f"\n⚡ Сравнение токенизации дефисных конструкций (pre-split chunk):")
+    print(f"\n⚡ Сравнение токенизаторов (pre-split chunk, {len(chunk_9_texts)} предложения):")
     for i, (s_int, s_rz, s_nru) in enumerate(
-            zip(result_int_chunk, result_rz_chunk, result_nru_chunk), 1
+            zip(result_int_9, result_rz_9, result_nru_9), 1
     ):
         print(f"\n  Предложение {i}: '{s_int['text']}'")
-        print(f"    internal:  {[w['form'] for w in s_int['words']]}")
-        print(f"    razdel:    {[w['form'] for w in s_rz['words']]}")
-        print(f"    native_ru: {[w['form'] for w in s_nru['words']]}")
+        print(f"    internal  : {[w['form'] for w in s_int['words']]}")
+        print(f"    razdel    : {[w['form'] for w in s_rz['words']]}")
+        print(f"    native_ru : {[w['form'] for w in s_nru['words']]}")
+        # Проверка misc последнего токена промежуточных предложений
+        if i < len(chunk_9_texts):
+            for name, res in [("internal", s_int), ("razdel", s_rz), ("native_ru", s_nru)]:
+                last_misc = res["words"][-1].get("misc")
+                status = "✅" if last_misc == "_" else "❌"
+                print(f"    {status} {name}: последний токен misc='{last_misc}' (ожидается '_')")
+
+    # Ожидаемые результаты токенизации для предложения 1:
+    print(f"\n  Ожидаемые результаты (предложение 1):")
+    print(f"    Все-таки      → 1 токен (native_ru, razdel) / 3 токена (internal)")
+    print(f"    кружка-термос → 3 токена (internal, native_ru) / 1 токен (razdel)")
+    print(f"    какая-нибудь  → 1 токен (native_ru, razdel) / 3 токена (internal)")
 
 
     print(f"\n{'✅ Тестирование завершено!':^72}")
