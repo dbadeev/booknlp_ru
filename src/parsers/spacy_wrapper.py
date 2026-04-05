@@ -42,7 +42,7 @@ import sys
 
 import modal
 from razdel import sentenize
-from typing import Any, Dict, List, Literal, Tuple, TypedDict, Union, cast
+from typing import Any, Dict, List, Literal, Tuple, TypedDict, Union, cast, overload
 
 import logging as _logging
 
@@ -51,7 +51,7 @@ _merge_logger = _logging.getLogger(__name__)
 OutputFormat = Literal["native", "conllu"]
 # [native_ru] Добавлено значение "native_ru" в тип TokenizerType.
 TokenizerType = Literal["internal", "razdel", "native_ru"]
-
+# noinspection DuplicatedCode
 default_chunk_size: int = 32  # предложений на чанк; подбирается под GPU и тип текста
 
 
@@ -203,6 +203,7 @@ class SpacyParser:
                     last_tok["misc"] = "_"
         return sentences
 
+    # noinspection DuplicatedCode
     @staticmethod
     def _fix_boundary_misc(result: Any, output_format: str) -> Any:
         """
@@ -237,6 +238,28 @@ class SpacyParser:
         return result
 
     # ─── Public API ───────────────────────────────────────────────────────
+    @overload
+    def parse_text(
+            self,
+            text: str,
+            output_format: Literal["native"],
+            tokenizer: TokenizerType = ...,
+            chunk_size: int = ...,
+            batch_size: int = ...,
+    ) -> List[Dict[str, Any]]:
+        ...
+
+    @overload
+    def parse_text(
+            self,
+            text: str,
+            output_format: Literal["conllu"],
+            tokenizer: TokenizerType = ...,
+            chunk_size: int = ...,
+            batch_size: int = ...,
+    ) -> str:
+        ...
+
     def parse_text(
         self,
         text: str,
@@ -260,6 +283,7 @@ class SpacyParser:
             tokenizer:    'internal' | 'razdel' | 'native_ru'  [native_ru]
             chunk_size:   Предложений на чанк (подбирается под GPU).
                           По умолчанию default_chunk_size = 32.
+            batch_size:   Размер батча при обработке GPU (передаётся в Modal). Default: 32.
         Returns:
             native → List[Dict]
             conllu → str
@@ -329,6 +353,7 @@ class SpacyParser:
             output_format: 'native' | 'conllu'
             tokenizer:    'internal' | 'razdel' | 'native_ru'  [native_ru]
             chunk_size:   Предложений на чанк
+            batch_size:   Размер батча при обработке GPU (передаётся в Modal). Default: 32.
         Returns:
             List[результат для каждого текста]
         """
@@ -517,7 +542,9 @@ if __name__ == "__main__":
         tokenizer="internal",
         chunk_size=args.chunk_size,
     )
+    # noinspection DuplicatedCode
     print(f"\nТекст: '{text_single}'")
+    # noinspection DuplicatedCode
     for sentence in result_ni:
         sentence: SentenceDict
         print(
@@ -541,6 +568,7 @@ if __name__ == "__main__":
         chunk_size=args.chunk_size,
     )
     print(f"\n⚡ Сравнение токенизаторов: '{text_single}'")
+    # noinspection DuplicatedCode
     native_sents = cast(List[Dict[str, Any]], result_ni)
     razdel_sents = cast(List[Dict[str, Any]], result_nr)
     print(f"  internal: {[w['form'] for s in native_sents for w in s['words']]}")
@@ -660,10 +688,10 @@ if __name__ == "__main__":
     print(f"\nТекст: '{text_multi}'")
     for s in result_multi_int:
         print(f"  Предложение: '{s['text']}' (chars {s['start_char']}:{s['end_char']})")
-        forms = [w["form"] for w in s["words"]]
-        print(f"    Токены: {forms}")
-        last_tok = s["words"][-1]
-        print(f"    Последний токен misc: {last_tok.get('misc')} (ожидается '_' у промежуточных)")
+        sent_forms = [w["form"] for w in s["words"]]
+        print(f"    Токены: {sent_forms}")
+        last_word = s["words"][-1]
+        print(f"    Последний токен misc: {last_word.get('misc')} (ожидается '_' у промежуточных)")
 
     print(
         "\n  ⚠️  ОГРАНИЧЕНИЕ internal/native_ru: start_char=0 для всех предложений.\n"
