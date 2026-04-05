@@ -54,6 +54,7 @@ class SpacyService:
       parse_batch — список текстов целиком
     """
 
+    # noinspection DuplicatedCode
     @modal.enter()
     def setup(self):
         import spacy
@@ -374,6 +375,7 @@ class SpacyService:
     #     }
     #     return [sent_data]
 
+    # noinspection DuplicatedCode
     @staticmethod
     def _format_native_doc(
             doc,
@@ -386,20 +388,20 @@ class SpacyService:
         """
         if single_sentence:
             # текущая логика format_native
-            """
-                    Форматирует spaCy Doc в List[SentenceDict].
-                    Doc считается одним предложением — сентенизация уже выполнена снаружи
-                    (razdel в wrapper или split_to_sentence_chunks).
-                    Итерация по doc.sents намеренно не используется во избежание
-                    рассинхронизации с внешней сентенизацией.
 
-                    Args:
-                        doc: spaCy Doc (одно предложение)
-                        char_offset: смещение символов относительно исходного текста
-                                     (передаётся из parse_sentence_chunk для razdel-пути)
-                    Returns:
-                        List с одним SentenceDict, или [] если doc пустой
-                    """
+            # Форматирует spaCy Doc в List[SentenceDict].
+            # Doc считается одним предложением — сентенизация уже выполнена снаружи
+            # (razdel в wrapper или split_to_sentence_chunks).
+            # Итерация по doc.sents намеренно не используется во избежание
+            # рассинхронизации с внешней сентенизацией.
+            #
+            # Args:
+            #     doc: spaCy Doc (одно предложение)
+            #     char_offset: смещение символов относительно исходного текста
+            #                  (передаётся из parse_sentence_chunk для razdel-пути)
+            # Returns:
+            #     List с одним SentenceDict, или [] если doc пустой
+
             tokens = list(doc)
             if not tokens:
                 return []
@@ -409,7 +411,7 @@ class SpacyService:
                 morph_str = str(token.morph) if token.morph.to_dict() else ""
                 word_dict: Dict[str, Any] = {
                     # Позиция в предложении (1-based, CoNLL-совместимо)
-                    "id": token.i + 1,
+                    "id": token.i - tokens[0].i + 1,
                     "start_char": token.idx + char_offset,
                     "end_char": token.idx + len(token.text) + char_offset,
                     # Формы
@@ -424,11 +426,11 @@ class SpacyService:
                     "feats": morph_str if morph_str else "_",  # "_" как в стандарте CoNLL-
                     # Синтаксис
                     # head=0 означает root (токен указывает на себя)
-                    "head": token.head.i + 1 if token.head.i != token.i else 0,
+                    "head": token.head.i - tokens[0].i + 1 if token.head.i != token.i else 0,
                     "deprel": token.dep_,
                     "n_lefts": token.n_lefts,
                     "n_rights": token.n_rights,
-                    "children": [c.i + 1 for c in token.children],
+                    "children": [c.i - tokens[0].i + 1 for c in token.children],
                     # NER
                     "ent_type": token.ent_type_ or None,
                     "ent_iob": token.ent_iob_ if token.ent_iob_ != "O" else None,
@@ -475,8 +477,9 @@ class SpacyService:
                 "start_char": tokens[0].idx + char_offset,
                 "end_char": tokens[-1].idx + len(tokens[-1].text) + char_offset,
                 "words": words,
-                "entities": entities,
             }
+            if entities:
+                sent_data["entities"] = entities
             return [sent_data]
         else:
             # текущая логика _format_native
@@ -566,9 +569,11 @@ class SpacyService:
     def _format_conllu(doc) -> str:
         """CoNLL-U через spacy-conll (doc._.conll_str заполняется в pipeline)."""
         # noinspection PyProtectedMember
-        return doc._.conll_str  # type: ignore[attr-defined]
+        # return doc._.conll_str  # type: ignore[attr-defined]
+        return doc._.conll_str.strip() + "\n"
 
     # ─── Production methods: принимают pre-split чанки из wrapper ───────────
+    # noinspection DuplicatedCode
     @modal.method()
     def parse_sentence_chunk(
         self,
@@ -609,7 +614,7 @@ class SpacyService:
     @modal.method()
     def parse_sentence_chunk_native(
         self,
-        sentences: List[str],   # тексты предложений чанка (без офсетов
+        sentences: List[str],   # тексты предложений чанка (без офсетов)
         output_format: str = "native",
         batch_size: int = 32,
         # [native_ru] Добавлен параметр tokenizer.
@@ -631,6 +636,11 @@ class SpacyService:
         Returns:
             native → List[Dict]
             conllu → str
+
+        ⚠️  misc последнего токена промежуточных предложений чанка возвращается
+        as-is (SpaceAfter=No / _). Нормализацию выполняет wrapper:
+        SpacyParser._merge_chunks / _fix_boundary_misc.
+        При прямых вызовах сервиса вне wrapper корректируйте misc самостоятельно.
         """
         # [native_ru] tokenizer пробрасывается в _make_doc:
         #   "internal"  → self.original_tokenizer(text) (spaCy rule-based)

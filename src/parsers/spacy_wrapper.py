@@ -44,6 +44,10 @@ import modal
 from razdel import sentenize
 from typing import Any, Dict, List, Literal, Tuple, TypedDict, Union, cast
 
+import logging as _logging
+
+_merge_logger = _logging.getLogger(__name__)
+
 OutputFormat = Literal["native", "conllu"]
 # [native_ru] Добавлено значение "native_ru" в тип TokenizerType.
 TokenizerType = Literal["internal", "razdel", "native_ru"]
@@ -160,6 +164,7 @@ class SpacyParser:
             for i in range(0, len(sentences), chunk_size)
         ]
 
+    # noinspection DuplicatedCode
     @staticmethod
     def _merge_chunks(
         chunk_results: List[Any],
@@ -181,6 +186,10 @@ class SpacyParser:
                         if len(cols) == 10 and cols[9] == "SpaceAfter=No":
                             cols[9] = "_"
                             lines[j] = "\t".join(cols)
+                        elif len(cols) != 10:
+                            _merge_logger.warning(
+                                "Unexpected CoNLL-U column count %d in line: %r", len(cols), lines[j]
+                            )
                         break
                 parts[i] = "\n".join(lines)
             return "\n\n".join(parts) + "\n" if parts else ""
@@ -218,6 +227,10 @@ class SpacyParser:
                             if len(cols) == 10 and cols[9] == "SpaceAfter=No":
                                 cols[9] = "_"
                                 lines[j] = "\t".join(cols)
+                            elif len(cols) != 10:
+                                _merge_logger.warning(
+                                    "Unexpected CoNLL-U column count %d in line: %r", len(cols), lines[j]
+                                )
                             break
                     parts[i] = "\n".join(lines)
                 result = "\n\n".join(parts) + "\n"
@@ -230,6 +243,7 @@ class SpacyParser:
         output_format: OutputFormat = "native",
         tokenizer: TokenizerType = "internal",
         chunk_size: int = default_chunk_size,
+        batch_size: int = 32,
     ) -> Union[List[Dict[str, Any]], str]:
         """
         Парсит текст через SpaCy в Modal.
@@ -257,12 +271,12 @@ class SpacyParser:
                     return [] if output_format == "native" else ""
                 if len(chunks) == 1:
                     result = self.service.parse_sentence_chunk.remote(
-                        chunks[0], output_format=output_format
+                        chunks[0], output_format=output_format, batch_size=batch_size
                     )
                     return self._fix_boundary_misc(result, output_format)
                 chunk_results = list(
                     self.service.parse_sentence_chunk.map(
-                        chunks, kwargs={"output_format": output_format}
+                        chunks, kwargs={"output_format": output_format, "batch_size": batch_size}
                     )
                 )
                 return self._merge_chunks(chunk_results, output_format)
@@ -279,6 +293,7 @@ class SpacyParser:
                         chunks[0],
                         output_format=output_format,
                         tokenizer=tokenizer,
+                        batch_size=batch_size,
                     )
                     return self._fix_boundary_misc(result, output_format)
                 chunk_results = list(
@@ -287,6 +302,7 @@ class SpacyParser:
                         kwargs={
                             "output_format": output_format,
                             "tokenizer": tokenizer,  # [native_ru] передаём во все чанки
+                            "batch_size": batch_size,
                         },
                     )
                 )
@@ -302,6 +318,7 @@ class SpacyParser:
         output_format: OutputFormat = "native",
         tokenizer: TokenizerType = "internal",
         chunk_size: int = default_chunk_size,
+        batch_size: int = 32,
     ) -> List[Union[List[Dict[str, Any]], str]]:
         """
         Разбивает все тексты на чанки и отправляет их единым .map() —
@@ -328,7 +345,7 @@ class SpacyParser:
 
                 all_results = list(
                     self.service.parse_sentence_chunk.map(
-                        all_chunks, kwargs={"output_format": output_format}
+                        all_chunks, kwargs={"output_format": output_format, "batch_size": batch_size,}
                     )
                 )
             else:
@@ -348,6 +365,7 @@ class SpacyParser:
                         kwargs={
                             "output_format": output_format,
                             "tokenizer": tokenizer,  # [native_ru] передаём "internal" или "native_ru"
+                            "batch_size": batch_size,
                         },
                     )
                 )
