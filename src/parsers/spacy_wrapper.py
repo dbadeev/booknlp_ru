@@ -44,9 +44,7 @@ import modal
 from razdel import sentenize
 from typing import Any, Dict, List, Literal, Tuple, TypedDict, Union, cast, overload
 
-import logging as _logging
-
-_merge_logger = _logging.getLogger(__name__)
+_merge_logger = logging.getLogger(__name__)
 
 OutputFormat = Literal["native", "conllu"]
 # [native_ru] Добавлено значение "native_ru" в тип TokenizerType.
@@ -181,17 +179,20 @@ class SpacyParser:
             for i in range(len(parts) - 1):
                 lines = parts[i].split("\n")
                 for j in range(len(lines) - 1, -1, -1):
-                    if lines[j] and not lines[j].startswith("#"):
+                    if lines[j] and not lines[j].startswith("#") and "\t" in lines[j]:
                         cols = lines[j].split("\t")
-                        if len(cols) == 10 and cols[9] == "SpaceAfter=No":
-                            cols[9] = "_"
-                            lines[j] = "\t".join(cols)
-                        elif len(cols) != 10:
+                        if len(cols) == 10:
+                            if cols[9] == "SpaceAfter=No":
+                                cols[9] = "_"
+                                lines[j] = "\t".join(cols)
+                            # else: MISC не требует замены — break всё равно вызывается
+                        else:
                             _merge_logger.warning(
                                 "Unexpected CoNLL-U column count %d in line: %r", len(cols), lines[j]
                             )
-                        break
+                        break  # ← break ВСЕГДА после первой найденной токен-строки
                 parts[i] = "\n".join(lines)
+
             return "\n\n".join(parts) + "\n" if parts else ""
 
         sentences = [sent for cr in chunk_results for sent in cr]
@@ -223,12 +224,13 @@ class SpacyParser:
                 for i in range(len(parts) - 1):
                     lines = parts[i].split("\n")
                     for j in range(len(lines) - 1, -1, -1):
-                        if lines[j] and not lines[j].startswith("#"):
+                        if lines[j] and not lines[j].startswith("#") and "\t" in lines[j]:
                             cols = lines[j].split("\t")
-                            if len(cols) == 10 and cols[9] == "SpaceAfter=No":
-                                cols[9] = "_"
-                                lines[j] = "\t".join(cols)
-                            elif len(cols) != 10:
+                            if len(cols) == 10:
+                                if cols[9] == "SpaceAfter=No":
+                                    cols[9] = "_"
+                                    lines[j] = "\t".join(cols)
+                            else:
                                 _merge_logger.warning(
                                     "Unexpected CoNLL-U column count %d in line: %r", len(cols), lines[j]
                                 )
@@ -288,6 +290,9 @@ class SpacyParser:
             native → List[Dict]
             conllu → str
         """
+        if not text or not text.strip():
+            self.logger.debug("parse_text: empty input, returning early.")
+            return [] if output_format == "native" else ""
         try:
             if tokenizer == "razdel":
                 chunks = self._split_to_chunks(text, chunk_size)
@@ -357,11 +362,18 @@ class SpacyParser:
         Returns:
             List[результат для каждого текста]
         """
+        # Нормализуем: сохраняем исходные индексы, чтобы вернуть пустые
+        # результаты на нужные позиции без отправки в Modal.
+        empty_result = [] if output_format == "native" else ""
+        non_empty_indices = [i for i, t in enumerate(texts) if t and t.strip()]
+        if not non_empty_indices:
+            return [empty_result for _ in texts]
+        texts_to_process = [texts[i] for i in non_empty_indices]
         try:
             chunks_per_text: List[int] = []
             if tokenizer == "razdel":
                 all_chunks: List[List[Tuple[str, int]]] = []
-                for text in texts:
+                for text in texts_to_process:
                     text_chunks = self._split_to_chunks(text, chunk_size)
                     chunks_per_text.append(len(text_chunks))
                     all_chunks.extend(text_chunks)
@@ -378,7 +390,7 @@ class SpacyParser:
                 # tokenizer передаётся через kwargs во все вызовы .map(),
                 # чтобы parse_sentence_chunk_native применил нужный _make_doc.
                 all_chunks_native: List[List[str]] = []
-                for text in texts:
+                for text in texts_to_process:
                     text_chunks = self._split_to_sentence_chunks(text, chunk_size)
                     chunks_per_text.append(len(text_chunks))
                     all_chunks_native.extend(text_chunks)
@@ -396,14 +408,17 @@ class SpacyParser:
                 )
 
             # Reassemble: восстанавливаем результаты по текстам
-            results, offset = [], 0
+            partial_results, offset = [], 0
             for n_chunks in chunks_per_text:
-                results.append(
+                partial_results.append(
                     self._merge_chunks(
-                        all_results[offset : offset + n_chunks], output_format
+                        all_results[offset: offset + n_chunks], output_format
                     )
                 )
                 offset += n_chunks
+            results = [empty_result] * len(texts)
+            for out_idx, res in zip(non_empty_indices, partial_results):
+                results[out_idx] = res
             return results
         except Exception as exc:
             self.logger.error(f"❌ Error during batch parsing: {exc}")

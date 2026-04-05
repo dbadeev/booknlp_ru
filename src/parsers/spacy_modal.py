@@ -528,7 +528,8 @@ class SpacyService:
                         "ent_type": token.ent_type_ or None,
                         "ent_iob": token.ent_iob_ if token.ent_iob_ != "O" else None,
                         # ── Метаданные ──────────────────────────────────────────
-                        "is_sent_start": token.is_sent_start,
+                        "is_sent_start": token.is_sent_start if token.is_sent_start is not None
+                        else (token.i == sent.start),
                         "whitespace": token.whitespace_,
                         "misc": "SpaceAfter=No" if not token.whitespace_ else "_",
                         # ── Лексические флаги ───────────────────────────────────
