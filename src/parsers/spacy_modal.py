@@ -660,9 +660,16 @@ class SpacyService:
             ) + "\n"
         result = []
         for doc, base_offset in zip(docs, base_offsets):
-            # Передаём base_offset в _format_native_doc: все start_char/end_char
-            # будут абсолютными — как в razdel-пути.
             result.extend(self._format_native_doc(doc, char_offset=base_offset))
+
+        # Исправляем SpaceAfter=No у последнего токена промежуточных предложений.
+        # В wrapper _fix_boundary_misc / _merge_chunks делают то же самое, поэтому
+        # двойное применение безопасно (повторный вызов идемпотентен: _ → _ без изменений).
+        for sent in result[:-1]:
+            if sent.get("words"):
+                last_tok = sent["words"][-1]
+                if last_tok.get("misc") == "SpaceAfter=No":
+                    last_tok["misc"] = "_"
         return result
 
     # ─── Backward compat / local_entrypoint ─────────────────────────────────

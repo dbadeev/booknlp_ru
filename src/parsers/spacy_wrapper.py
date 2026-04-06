@@ -15,11 +15,10 @@ Wrapper — тонкий клиент. Три обязанности:
     sentenize → List[List[(text, start_char)]] → service.parse_sentence_chunk.map(chunks)
 
   internal (встроенный токенизатор spaCy):
-    sentenize → List[List[str]] → service.parse_sentence_chunk_native.map(chunks)
+    sentenize → List[List[(text, start_char)]] → service.parse_sentence_chunk_native.map(chunks)
 
   native_ru (spaCy rule-based + SynTagRus merge patterns):  [native_ru]
-    sentenize → List[List[str]] → service.parse_sentence_chunk_native.map(chunks,
-                                      kwargs={..., "tokenizer": "native_ru"})
+    sentenize → List[List[(text, start_char)]] → service.parse_sentence_chunk_native.map(chunks, ...)
 
 Использование:
   from spacy_wrapper import SpacyParser
