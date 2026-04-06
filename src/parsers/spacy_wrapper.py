@@ -42,13 +42,17 @@ import sys
 
 import modal
 from razdel import sentenize
-from typing import Any, Dict, List, Literal, Tuple, TypedDict, Union, cast, overload
+from typing import Any, Dict, List, Literal, Tuple, TypedDict, Union, cast, get_args, overload
 
 _merge_logger = logging.getLogger(__name__)
 
 OutputFormat = Literal["native", "conllu"]
 # [native_ru] Добавлено значение "native_ru" в тип TokenizerType.
 TokenizerType = Literal["internal", "razdel", "native_ru"]
+
+VALID_OUTPUT_FORMATS = set(get_args(OutputFormat))   # {"native", "conllu"}
+VALID_TOKENIZERS     = set(get_args(TokenizerType))  # {"internal", "razdel", "native_ru"}
+
 # noinspection DuplicatedCode
 default_chunk_size: int = 32  # предложений на чанк; подбирается под GPU и тип текста
 
@@ -145,20 +149,25 @@ class SpacyParser:
             for i in range(0, len(sentences), chunk_size)
         ]
 
+    # noinspection DuplicatedCode
     @staticmethod
     def _split_to_sentence_chunks(
         text: str,
         chunk_size: int,
-    ) -> List[List[str]]:
+        base_offset: int = 0,
+    ) -> List[List[Tuple[str, int]]]:
         """
-        Native / native_ru path: разбивает текст на чанки предложений (только тексты).
-        Returns: List[List[str]]
+        Native / native_ru path: разбивает текст на чанки предложений
+        с абсолютными символьными офсетами.
+        Returns: List[List[(sentence_text, start_char_in_original)]]
+        base_offset — смещение text в более крупном документе
+                      (используется в parse_batch).
         """
         if chunk_size <= 0:
             raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
         sentences = list(sentenize(text))
         return [
-            [s.text for s in sentences[i: i + chunk_size]]  # ✅ только текст
+            [(s.text, base_offset + s.start) for s in sentences[i : i + chunk_size]]
             for i in range(0, len(sentences), chunk_size)
         ]
 
@@ -293,6 +302,20 @@ class SpacyParser:
         if not text or not text.strip():
             self.logger.debug("parse_text: empty input, returning early.")
             return [] if output_format == "native" else ""
+
+        if output_format not in VALID_OUTPUT_FORMATS:
+            raise ValueError(
+                f"Unsupported output_format={output_format!r}. "
+                f"Expected one of {sorted(VALID_OUTPUT_FORMATS)}"
+            )
+        if tokenizer not in VALID_TOKENIZERS:
+            raise ValueError(
+                f"Unsupported tokenizer={tokenizer!r}. "
+                f"Expected one of {sorted(VALID_TOKENIZERS)}"
+            )
+        if batch_size <= 0:
+            raise ValueError(f"batch_size must be > 0, got {batch_size}")
+
         try:
             if tokenizer == "razdel":
                 chunks = self._split_to_chunks(text, chunk_size)
@@ -336,8 +359,8 @@ class SpacyParser:
                     )
                 )
                 return self._merge_chunks(chunk_results, output_format)
-        except Exception as exc:
-            self.logger.error(f"❌ Error during spaCy parsing: {exc}")
+        except Exception:
+            self.logger.exception("❌ Error during spaCy parsing")
             raise
 
     # noinspection DuplicatedCode
@@ -364,6 +387,19 @@ class SpacyParser:
         """
         # Нормализуем: сохраняем исходные индексы, чтобы вернуть пустые
         # результаты на нужные позиции без отправки в Modal.
+        if output_format not in VALID_OUTPUT_FORMATS:
+            raise ValueError(
+                f"Unsupported output_format={output_format!r}. "
+                f"Expected one of {sorted(VALID_OUTPUT_FORMATS)}"
+            )
+        if tokenizer not in VALID_TOKENIZERS:
+            raise ValueError(
+                f"Unsupported tokenizer={tokenizer!r}. "
+                f"Expected one of {sorted(VALID_TOKENIZERS)}"
+            )
+        if batch_size <= 0:
+            raise ValueError(f"batch_size must be > 0, got {batch_size}")
+
         empty_result = [] if output_format == "native" else ""
         non_empty_indices = [i for i, t in enumerate(texts) if t and t.strip()]
         if not non_empty_indices:
@@ -389,7 +425,7 @@ class SpacyParser:
                 # [native_ru] Ветка обрабатывает tokenizer="internal" и tokenizer="native_ru".
                 # tokenizer передаётся через kwargs во все вызовы .map(),
                 # чтобы parse_sentence_chunk_native применил нужный _make_doc.
-                all_chunks_native: List[List[str]] = []
+                all_chunks_native: List[List[Tuple[str, int]]] = []
                 for text in texts_to_process:
                     text_chunks = self._split_to_sentence_chunks(text, chunk_size)
                     chunks_per_text.append(len(text_chunks))
@@ -420,8 +456,8 @@ class SpacyParser:
             for out_idx, res in zip(non_empty_indices, partial_results):
                 results[out_idx] = res
             return results
-        except Exception as exc:
-            self.logger.error(f"❌ Error during batch parsing: {exc}")
+        except Exception:
+            self.logger.exception("❌ Error during batch parsing")
             raise
 
 

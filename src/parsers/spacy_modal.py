@@ -612,31 +612,27 @@ class SpacyService:
             result.extend(self._format_native_doc(doc, char_offset=char_offset))
         return result
 
+    # noinspection DuplicatedCode
     @modal.method()
     def parse_sentence_chunk_native(
-        self,
-        sentences: List[str],   # тексты предложений чанка (без офсетов)
-        output_format: str = "native",
-        batch_size: int = 32,
-        # [native_ru] Добавлен параметр tokenizer.
-        # Значение по умолчанию "internal" сохраняет обратную совместимость:
-        # существующие вызовы из wrapper без явного tokenizer продолжают работать.
-        # Допустимые значения: "internal" | "native_ru"
-        tokenizer: TokenizerType = "internal",  # "internal" | "native_ru"
+            self,
+            sentences: List[Tuple[str, int]],  # (текст предложения, start_char в исходном тексте)
+            output_format: str = "native",
+            batch_size: int = 32,
+            tokenizer: TokenizerType = "internal",
     ) -> Any:
         """
         Internal / native_ru path.
-        Принимает чанк текстов предложений (без символьных офсетов).
-        start_char/end_char токенов — относительны каждого предложения.
+        Принимает чанк предложений вместе с абсолютными символьными офсетами.
 
         Args:
-            sentences:     List[str] — тексты предложений чанка
+            sentences:     List[Tuple[str, int]] — (текст предложения, start_char в исходном тексте)
             output_format: 'native' | 'conllu'
             batch_size:    int
             tokenizer:     'internal' | 'native_ru'  [native_ru]
         Returns:
-            native → List[Dict]
-            conllu → str
+            native → List[Dict] с корректными абсолютными start_char/end_char
+            conllu → str (char-офсеты в CoNLL-U не используются, без изменений)
 
         ⚠️  misc последнего токена промежуточных предложений чанка возвращается
         as-is (SpaceAfter=No / _). Нормализацию выполняет wrapper:
@@ -651,24 +647,22 @@ class SpacyService:
                 f"parse_sentence_chunk_native: tokenizer must be "
                 f"'internal' or 'native_ru', got {tokenizer!r}"
             )
-        docs = [self._make_doc(s, tokenizer) for s in sentences]
+        sent_texts = [text for text, _ in sentences]
+        base_offsets = [offset for _, offset in sentences]
+
+        docs = [self._make_doc(s, tokenizer) for s in sent_texts]
         docs = self._run_pipeline_batch(docs, batch_size=batch_size)
         if output_format == "conllu":
+            # char-офсеты в CoNLL-U не используются — возвращаем as-is.
             # noinspection PyProtectedMember
             return "\n\n".join(
                 doc._.conll_str.strip() for doc in docs  # type: ignore[attr-defined]
             ) + "\n"
         result = []
-        for doc in docs:
-            # char_offset=0: native/native_ru путь получает уже разбитые предложения
-            # без информации об исходных смещениях — это осознанное ограничение.
-            # start_char/end_char токенов будут относительны начала каждого предложения.
-            # ← offset всегда 0, потому что каждое предложение
-            # передаётся в Modal уже выделенным строковым фрагментом без привязки
-            # к позиции в исходном тексте (в отличие от razdel-пути, где
-            # start_char передаётся явно через List[Tuple[str, int]])
-
-            result.extend(self._format_native_doc(doc, char_offset=0))
+        for doc, base_offset in zip(docs, base_offsets):
+            # Передаём base_offset в _format_native_doc: все start_char/end_char
+            # будут абсолютными — как в razdel-пути.
+            result.extend(self._format_native_doc(doc, char_offset=base_offset))
         return result
 
     # ─── Backward compat / local_entrypoint ─────────────────────────────────
