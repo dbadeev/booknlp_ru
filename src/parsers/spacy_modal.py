@@ -862,10 +862,10 @@ def main():
     print(f"\n{sep}")
     print("6. parse_sentence_chunk_native (internal path, pre-split chunk)")
     print(sep)
-    chunk_texts = [s.text for s in sentences]
-    print(f"Чанк ({len(chunk_texts)} предложений): {chunk_texts}")
+    chunk_native = [(s.text, s.start) for s in sentences]
+    print(f"Чанк ({len(chunk_native)} предложений): {[c[0] for c in chunk_native]}")
     result_chunk_native = service.parse_sentence_chunk_native.remote(
-        chunk_texts, output_format="native", tokenizer="internal"
+        chunk_native, output_format="native", tokenizer="internal"
     )
     for sent in result_chunk_native:
         print(
