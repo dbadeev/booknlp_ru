@@ -377,6 +377,9 @@ class SpacyParser:
         if batch_size <= 0:
             raise ValueError(f"batch_size must be > 0, got {batch_size}")
 
+        if chunk_size <= 0:
+            raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
+
         empty_result = [] if output_format == "native" else ""
         non_empty_indices = [i for i, t in enumerate(texts) if t and t.strip()]
         if not non_empty_indices:
