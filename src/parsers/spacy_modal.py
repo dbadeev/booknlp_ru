@@ -928,22 +928,22 @@ def main():
         "Москва — столица России."
     )
     sentences_9 = list(sentenize(text_chunk9))
-    chunk_9_texts = [s.text for s in sentences_9]  # internal / native_ru path
-    chunk_9_offs = [(s.text, s.start) for s in sentences_9]  # razdel path (офсеты)
+    chunk_9 = [(s.text, s.start) for s in sentences_9]     # единый формат для native и razdel
+    chunk_9_offs = chunk_9                                  # razdel path — тот же список (офсеты уже есть)
 
-    print(f"Чанк ({len(chunk_9_texts)} предложений): {chunk_9_texts}")
+    print(f"Чанк ({len(chunk_9)} предложений): {[c[0] for c in chunk_9]}")
 
     result_nru_9 = service.parse_sentence_chunk_native.remote(
-        chunk_9_texts, output_format="native", tokenizer="native_ru"
+        chunk_9, output_format="native", tokenizer="native_ru"
     )
     result_int_9 = service.parse_sentence_chunk_native.remote(
-        chunk_9_texts, output_format="native", tokenizer="internal"
+        chunk_9, output_format="native", tokenizer="internal"
     )
     result_rz_9 = service.parse_sentence_chunk.remote(
         chunk_9_offs, output_format="native"
     )
 
-    print(f"\n⚡ Сравнение токенизаторов (pre-split chunk, {len(chunk_9_texts)} предложения):")
+    print(f"\n⚡ Сравнение токенизаторов (pre-split chunk, {len([c[0] for c in chunk_9])} предложения):")
     for i, (s_int, s_rz, s_nru) in enumerate(
             zip(result_int_9, result_rz_9, result_nru_9), 1
     ):
@@ -952,7 +952,7 @@ def main():
         print(f"    razdel    : {[w['form'] for w in s_rz['words']]}")
         print(f"    native_ru : {[w['form'] for w in s_nru['words']]}")
         # Проверка misc последнего токена промежуточных предложений
-        if i < len(chunk_9_texts):
+        if i < len([c[0] for c in chunk_9]):
             for name, res in [("internal", s_int), ("razdel", s_rz), ("native_ru", s_nru)]:
                 last_misc = res["words"][-1].get("misc")
                 status = "✅" if last_misc == "_" else "❌"
