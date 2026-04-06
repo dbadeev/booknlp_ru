@@ -129,38 +129,16 @@ class SpacyParser:
     # ─── Chunking ─────────────────────────────────────────────────────────
     # noinspection DuplicatedCode
     @staticmethod
-    def _split_to_chunks(
-        text: str,
-        chunk_size: int,
-        base_offset: int = 0,
-    ) -> List[List[Tuple[str, int]]]:
-        """
-        Razdel path: разбивает текст на чанки с символьными офсетами.
-        Returns: List[List[(sentence_text, start_char_in_original)]]
-        base_offset — смещение text в более крупном документе
-                      (используется в parse_batch).
-        """
-        if chunk_size <= 0:
-            raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
-        sentences = list(sentenize(text))
-        return [
-            [(s.text, base_offset + s.start) for s in sentences[i : i + chunk_size]]
-            for i in range(0, len(sentences), chunk_size)
-        ]
-
-    # noinspection DuplicatedCode
-    @staticmethod
     def _split_to_sentence_chunks(
         text: str,
         chunk_size: int,
         base_offset: int = 0,
     ) -> List[List[Tuple[str, int]]]:
         """
-        Native / native_ru path: разбивает текст на чанки предложений
-        с абсолютными символьными офсетами.
+        Разбивает текст на чанки предложений с абсолютными символьными офсетами.
+        Используется для всех трёх токенизаторов (internal, razdel, native_ru).
         Returns: List[List[(sentence_text, start_char_in_original)]]
-        base_offset — смещение text в более крупном документе
-                      (используется в parse_batch).
+        base_offset — смещение text в более крупном документе (parse_batch).
         """
         if chunk_size <= 0:
             raise ValueError(f"chunk_size must be > 0, got {chunk_size}")
@@ -317,7 +295,7 @@ class SpacyParser:
 
         try:
             if tokenizer == "razdel":
-                chunks = self._split_to_chunks(text, chunk_size)
+                chunks = self._split_to_sentence_chunks(text, chunk_size)
                 if not chunks:
                     return [] if output_format == "native" else ""
                 if len(chunks) == 1:
@@ -409,7 +387,7 @@ class SpacyParser:
             if tokenizer == "razdel":
                 all_chunks: List[List[Tuple[str, int]]] = []
                 for text in texts_to_process:
-                    text_chunks = self._split_to_chunks(text, chunk_size)
+                    text_chunks = self._split_to_sentence_chunks(text, chunk_size)
                     chunks_per_text.append(len(text_chunks))
                     all_chunks.extend(text_chunks)
                 if not all_chunks:
@@ -424,6 +402,19 @@ class SpacyParser:
                 # [native_ru] Ветка обрабатывает tokenizer="internal" и tokenizer="native_ru".
                 # tokenizer передаётся через kwargs во все вызовы .map(),
                 # чтобы parse_sentence_chunk_native применил нужный _make_doc.
+
+                # ⚠️  ОГРАНИЧЕНИЕ: для tokenizer="internal" и tokenizer="native_ru"
+                # start_char каждого предложения в native-формате равен смещению
+                # внутри своего текста, а НЕ абсолютному смещению в исходном тексте.
+                # Это осознанное ограничение (аналогично parse_text, Вариант 7).
+                # Для корректных абсолютных позиций используйте tokenizer="razdel".
+                if output_format == "native":
+                    self.logger.warning(
+                        "parse_batch: tokenizer=%r возвращает start_char относительно "
+                        "каждого предложения, не исходного текста. "
+                        "Для абсолютных позиций используйте tokenizer='razdel'.",
+                        tokenizer,
+                    )
                 all_chunks_native: List[List[Tuple[str, int]]] = []
                 for text in texts_to_process:
                     text_chunks = self._split_to_sentence_chunks(text, chunk_size)

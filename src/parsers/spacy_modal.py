@@ -610,6 +610,14 @@ class SpacyService:
         result = []
         for doc, char_offset in zip(docs, char_offsets):
             result.extend(self._format_native_doc(doc, char_offset=char_offset))
+
+        # Исправляем SpaceAfter=No у последнего токена промежуточных предложений.
+        # Аналогично parse_sentence_chunk_native и _merge_chunks в wrapper.
+        for sent in result[:-1]:
+            if sent.get("words"):
+                last_tok = sent["words"][-1]
+                if last_tok.get("misc") == "SpaceAfter=No":
+                    last_tok["misc"] = "_"
         return result
 
     # noinspection DuplicatedCode
@@ -902,7 +910,7 @@ def main():
     print(f"   internal:  {[w['form'] for s in result   for w in s['words']]}")
     print(f"   razdel:    {[w['form'] for s in result_r for w in s['words']]}")
     print(f"   native_ru: {[w['form'] for s in result_nru for w in s['words']]}")
-    print(f"\n   Ожидаемый результат native_ru (ошибка): 'Кружка-термос' — 3 токена (как и internal)")
+    print("   native_ru: 'Кружка-термос' → 3 токена (ожидаемо: Noun-Noun не входит в MERGE_PATTERNS)")
     for sent in result_nru:
         print(f"\nПредложение: '{sent['text']}'")
         for tok in sent["words"]:
@@ -936,7 +944,7 @@ def main():
     )
     sentences_9 = list(sentenize(text_chunk9))
     chunk_9 = [(s.text, s.start) for s in sentences_9]     # единый формат для native и razdel
-    chunk_9_offs = chunk_9                                  # razdel path — тот же список (офсеты уже есть)
+                                # razdel path — тот же список (офсеты уже есть)
 
     print(f"Чанк ({len(chunk_9)} предложений): {[c[0] for c in chunk_9]}")
 
@@ -947,7 +955,7 @@ def main():
         chunk_9, output_format="native", tokenizer="internal"
     )
     result_rz_9 = service.parse_sentence_chunk.remote(
-        chunk_9_offs, output_format="native"
+        chunk_9, output_format="native"
     )
 
     print(f"\n⚡ Сравнение токенизаторов (pre-split chunk, {len([c[0] for c in chunk_9])} предложения):")
